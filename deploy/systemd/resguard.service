@@ -1,0 +1,15 @@
+[Unit]
+Description=Monitor y gestor dinámico de recursos de servicios
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/resguardd
+Restart=on-failure
+RestartSec=5s
+# Crea /run/resguard para el socket y lo elimina al parar.
+RuntimeDirectory=resguard
+RuntimeDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target

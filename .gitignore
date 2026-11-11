@@ -1,0 +1,47 @@
+# Binarios y artefactos de compilación
+/bin/
+/dist/
+/build/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Cobertura y perfiles
+coverage.*
+*.coverprofile
+*.prof
+*.pprof
+
+# Dependencias vendorizadas (descomentar si no se versionan)
+# /vendor/
+
+# Workspace de Go
+go.work
+go.work.sum
+
+# Configuración local y secretos
+.env
+.env.*
+*.local.yaml
+*.local.toml
+
+# Logs y datos de ejecución
+*.log
+/logs/
+/data/
+*.sock
+*.pid
+
+# Editores e IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Sistema
+.DS_Store
+Thumbs.db
