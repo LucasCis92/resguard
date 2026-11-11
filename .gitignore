@@ -34,6 +34,8 @@ go.work.sum
 /data/
 *.sock
 *.pid
+# Registros de incidencias: contienen nombres de servicios de la máquina
+*.jsonl
 
 # Editores e IDEs
 .vscode/

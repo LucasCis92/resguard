@@ -1,15 +1,36 @@
 [Unit]
 Description=Monitor y gestor dinámico de recursos de servicios
-After=network.target
+Documentation=https://github.com/LucasCis92/resguard
+After=dbus.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/resguardd
+ExecStart=/usr/local/bin/resguardd -group resguard -events-file /var/lib/resguard/events.jsonl
 Restart=on-failure
 RestartSec=5s
-# Crea /run/resguard para el socket y lo elimina al parar.
+
+# /run/resguard para el socket (accesible para el grupo resguard por los
+# permisos del propio socket) y /var/lib/resguard para el registro de incidencias.
 RuntimeDirectory=resguard
-RuntimeDirectoryMode=0750
+RuntimeDirectoryMode=0755
+StateDirectory=resguard
+StateDirectoryMode=0750
+
+# Endurecimiento: el demonio solo lee /proc y /sys y habla por sockets Unix.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

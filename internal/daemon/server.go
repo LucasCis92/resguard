@@ -11,7 +11,9 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/user"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/LucasCis92/resguard/internal/ipc"
@@ -23,6 +25,7 @@ type Handler func(args []string) (string, error)
 // Server escucha en un socket Unix y despacha órdenes a sus handlers.
 type Server struct {
 	socketPath string
+	group      string
 	log        *slog.Logger
 	handlers   map[string]Handler
 }
@@ -33,6 +36,10 @@ func NewServer(socketPath string, log *slog.Logger) *Server {
 	s.Handle("help", s.help)
 	return s
 }
+
+// SetSocketGroup hace que el socket pertenezca al grupo indicado, de modo que
+// sus miembros puedan usar la CLI sin ser root. Vacío deja el grupo por defecto.
+func (s *Server) SetSocketGroup(group string) { s.group = group }
 
 // Handle registra el handler de una orden.
 func (s *Server) Handle(command string, h Handler) {
@@ -55,6 +62,11 @@ func (s *Server) Run(ctx context.Context) error {
 	if err := os.Chmod(s.socketPath, 0o660); err != nil {
 		return fmt.Errorf("ajustando permisos del socket: %w", err)
 	}
+	if s.group != "" {
+		if err := chownGroup(s.socketPath, s.group); err != nil {
+			return err
+		}
+	}
 
 	go func() {
 		<-ctx.Done()
@@ -73,6 +85,21 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		go s.serve(conn)
 	}
+}
+
+func chownGroup(path, group string) error {
+	g, err := user.LookupGroup(group)
+	if err != nil {
+		return fmt.Errorf("buscando el grupo del socket: %w", err)
+	}
+	gid, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return fmt.Errorf("gid inválido %q: %w", g.Gid, err)
+	}
+	if err := os.Chown(path, -1, gid); err != nil {
+		return fmt.Errorf("asignando el socket al grupo %s: %w", group, err)
+	}
+	return nil
 }
 
 func (s *Server) serve(conn net.Conn) {
