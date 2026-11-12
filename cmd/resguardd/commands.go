@@ -18,7 +18,7 @@ import (
 
 var errNoSample = errors.New("todavía no hay muestras; espera un par de segundos")
 
-func registerCommands(srv *daemon.Server, col *collector.Collector, store *events.Store, interval time.Duration) {
+func registerCommands(srv *daemon.Server, col *collector.Collector, store *events.Store, cur *current) {
 	srv.Register(daemon.Command{Name: "ping", Description: "comprueba que el demonio responde",
 		Text: func([]string) (string, error) { return "pong", nil }})
 	srv.Register(daemon.Command{Name: "version", Description: "versión del demonio",
@@ -34,6 +34,9 @@ func registerCommands(srv *daemon.Server, col *collector.Collector, store *event
 	srv.Register(daemon.Command{Name: "event", Usage: "event <id>", Description: "detalle de una incidencia",
 		Text: func(args []string) (string, error) { return eventCmd(store, args) }})
 
+	srv.Register(daemon.Command{Name: "config", Description: "configuración en uso y de dónde se cargó",
+		Text: func([]string) (string, error) { return cur.get().describe(), nil }})
+
 	// Estado completo para la vista "watch" de la CLI.
 	srv.Register(daemon.Command{Name: "snapshot", Hidden: true,
 		Data: func([]string) (any, error) {
@@ -41,7 +44,7 @@ func registerCommands(srv *daemon.Server, col *collector.Collector, store *event
 			if !ok {
 				return nil, errNoSample
 			}
-			return ipc.Snapshot{Sample: s, Services: col.Services(), Events: store.Recent(5), Interval: interval}, nil
+			return ipc.Snapshot{Sample: s, Services: col.Services(), Events: store.Recent(5), Interval: col.Interval()}, nil
 		}})
 }
 

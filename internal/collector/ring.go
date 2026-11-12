@@ -43,3 +43,13 @@ func (r *Ring[T]) Last(n int) []T {
 	}
 	return out
 }
+
+// Resized devuelve un búfer de la capacidad indicada con los elementos más
+// recientes de r que quepan.
+func (r *Ring[T]) Resized(capacity int) *Ring[T] {
+	n := NewRing[T](capacity)
+	for _, v := range r.Last(len(n.buf)) {
+		n.Push(v)
+	}
+	return n
+}

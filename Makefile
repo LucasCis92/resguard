@@ -60,10 +60,17 @@ install:
 	install -Dm0755 bin/resguardctl $(DESTDIR)$(PREFIX)/bin/resguardctl
 	install -Dm0644 deploy/systemd/resguard.service $(DESTDIR)/etc/systemd/system/resguard.service
 	install -Dm0644 deploy/sysusers.d/resguard.conf $(DESTDIR)/usr/lib/sysusers.d/resguard.conf
+	@# La configuración solo se instala si no existe, para no pisar la del usuario.
+	@if [ -e $(DESTDIR)/etc/resguard/config.yaml ]; then \
+		echo "Se conserva la configuración existente en /etc/resguard/config.yaml"; \
+	else \
+		install -Dm0644 deploy/config.yaml $(DESTDIR)/etc/resguard/config.yaml; \
+	fi
 	@if [ -z "$(DESTDIR)" ]; then systemd-sysusers /usr/lib/sysusers.d/resguard.conf && systemctl daemon-reload; fi
 
 uninstall:
 	-systemctl disable --now resguard
 	rm -f $(DESTDIR)$(PREFIX)/bin/resguardd $(DESTDIR)$(PREFIX)/bin/resguardctl
 	rm -f $(DESTDIR)/etc/systemd/system/resguard.service $(DESTDIR)/usr/lib/sysusers.d/resguard.conf
+	@echo "Se conservan /etc/resguard (configuración) y /var/lib/resguard (incidencias); bórralos a mano si ya no los quieres."
 	-systemctl daemon-reload

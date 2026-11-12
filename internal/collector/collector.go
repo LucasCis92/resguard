@@ -49,13 +49,14 @@ type Config struct {
 
 // Collector muestrea el sistema periódicamente.
 type Collector struct {
-	cfg       Config
 	reader    *metrics.Reader
 	log       *slog.Logger
 	observers []Observer
 	numCPU    float64
 
 	mu       sync.RWMutex
+	cfg      Config
+	reset    chan struct{} // avisa a Run de que cambió el intervalo
 	history  *Ring[Sample]
 	services []ServiceSample // solo los de la última muestra
 
@@ -75,8 +76,38 @@ func New(cfg Config, reader *metrics.Reader, log *slog.Logger) *Collector {
 		reader:  reader,
 		log:     log,
 		numCPU:  float64(runtime.NumCPU()),
+		reset:   make(chan struct{}, 1),
 		history: NewRing[Sample](cfg.History),
 	}
+}
+
+// Configure aplica una configuración nueva mientras el recolector funciona.
+// El historial conserva las muestras más recientes que quepan en el nuevo tamaño.
+func (c *Collector) Configure(cfg Config) {
+	if cfg.Interval <= 0 {
+		cfg.Interval = 2 * time.Second
+	}
+	c.mu.Lock()
+	intervalChanged := cfg.Interval != c.cfg.Interval
+	if cfg.History != c.cfg.History {
+		c.history = c.history.Resized(cfg.History)
+	}
+	c.cfg = cfg
+	c.mu.Unlock()
+
+	if intervalChanged {
+		select {
+		case c.reset <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// Interval devuelve el periodo de muestreo actual.
+func (c *Collector) Interval() time.Duration {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.cfg.Interval
 }
 
 // Observe registra un observador. Debe llamarse antes de Run.
@@ -86,12 +117,14 @@ func (c *Collector) Observe(o Observer) { c.observers = append(c.observers, o) }
 func (c *Collector) Run(ctx context.Context) {
 	// La primera lectura solo sirve de referencia para los deltas.
 	c.Tick()
-	t := time.NewTicker(c.cfg.Interval)
+	t := time.NewTicker(c.Interval())
 	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.reset:
+			t.Reset(c.Interval())
 		case <-t.C:
 			c.Tick()
 		}
@@ -105,7 +138,10 @@ func (c *Collector) Tick() {
 		c.log.Error("leyendo métricas del sistema", "err", err)
 		return
 	}
-	raw, err := c.reader.ReadServices(c.cfg.Slices)
+	c.mu.RLock()
+	slices := c.cfg.Slices
+	c.mu.RUnlock()
+	raw, err := c.reader.ReadServices(slices)
 	if err != nil {
 		c.log.Warn("leyendo métricas de servicios", "err", err)
 	}

@@ -5,7 +5,10 @@ After=dbus.service
 
 [Service]
 Type=simple
+# Umbrales, intervalos y servicios vigilados: /etc/resguard/config.yaml.
 ExecStart=/usr/local/bin/resguardd -group resguard -events-file /var/lib/resguard/events.jsonl
+# "systemctl reload resguard" relee la configuración sin reiniciar.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
 

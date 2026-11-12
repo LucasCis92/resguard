@@ -1,0 +1,41 @@
+# Configuración de resguard.
+#
+# Todas las claves son opcionales: si borras una, se usa el valor por defecto
+# (que es el que aparece aquí). Después de editar este archivo:
+#
+#   sudo resguardd -check-config      comprueba que sea válido
+#   sudo systemctl reload resguard    aplica los cambios sin perder el historial
+#
+# Si el archivo tiene un error, el servicio sigue con la configuración anterior
+# y lo indica en el journal (journalctl -u resguard).
+
+# Cada cuánto se toma una muestra (ejemplos: 500ms, 2s, 1m).
+interval: 2s
+
+# Cuánto tiempo de muestras se conserva en memoria para "history" y "watch".
+history: 1h
+
+# A partir de qué valor se registra un pico. 0 desactiva la alerta.
+# Un pico termina cuando el valor baja claramente del umbral: 10 puntos en
+# CPU, 5 en memoria y a la mitad en las de presión (PSI).
+thresholds:
+  # Uso de CPU de todo el sistema, en %.
+  cpu: 90
+  # Memoria en uso, en %.
+  memory: 90
+  # Presión (PSI): % del tiempo en que hubo tareas esperando por el recurso.
+  # Detecta contención aunque el uso no parezca alto.
+  psi_cpu: 40
+  psi_memory: 10
+  psi_io: 30
+  # Muestras seguidas por encima del umbral para registrar el pico.
+  # Con interval de 2s, sustain 2 ignora picos de menos de unos 4 segundos.
+  sustain: 2
+
+services:
+  # Dónde buscar servicios (slices de cgroups v2).
+  slices:
+    - system.slice
+  # Servicios que no generan incidencias (ni caídas ni OOM kills).
+  # Admite comodines, por ejemplo: "snap.*" o "user@*.service".
+  ignore: []

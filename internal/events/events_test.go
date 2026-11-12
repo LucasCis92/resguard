@@ -4,6 +4,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,5 +165,58 @@ func TestNewContextTop(t *testing.T) {
 	}
 	if svcs[0].Name != "a" {
 		t.Error("NewContext no debe reordenar la lista original")
+	}
+}
+
+func TestSetThresholdsKeepsActivePeak(t *testing.T) {
+	store := newStore(t)
+	d := NewDetector(store, Thresholds{CPU: 90, Memory: 90, Sustain: 1})
+	t0 := time.Now()
+
+	d.Observe(collector.Sample{Time: t0, CPUPercent: 95, MemUsedPercent: 95}, nil)
+	if n := len(store.Recent(0)); n != 2 {
+		t.Fatalf("eventos iniciales = %d, quiero 2 inicios", n)
+	}
+
+	// Se cambia el umbral de CPU y se desactiva el de memoria.
+	d.SetThresholds(Thresholds{CPU: 80, Sustain: 1})
+	evs := store.Recent(0)
+	if len(evs) != 3 || evs[2].Kind != PeakEnd || evs[2].Resource != "memory" || !strings.Contains(evs[2].Message, "desactivó") {
+		t.Fatalf("al desactivar memoria debe cerrarse su pico: %+v", kinds(evs))
+	}
+
+	// El pico de CPU sigue abierto: 85 no lo cierra (nuevo Low = 70) ni abre otro.
+	d.Observe(collector.Sample{Time: t0.Add(time.Second), CPUPercent: 85}, nil)
+	if n := len(store.Recent(0)); n != 3 {
+		t.Fatalf("no debería haber eventos nuevos: %v", kinds(store.Recent(0)))
+	}
+	d.Observe(collector.Sample{Time: t0.Add(2 * time.Second), CPUPercent: 50}, nil)
+	evs = store.Recent(0)
+	if last := evs[len(evs)-1]; last.Kind != PeakEnd || last.Resource != "cpu" || last.Duration != "2s" || last.Value != 95 {
+		t.Errorf("fin del pico de CPU = %+v", last)
+	}
+}
+
+func TestIgnoreOOM(t *testing.T) {
+	store := newStore(t)
+	d := NewDetector(store, Thresholds{})
+	d.SetIgnore(func(s string) bool { return s == "ruidoso.service" })
+	now := time.Now()
+	obs := func(n uint64) {
+		d.Observe(collector.Sample{Time: now}, []collector.ServiceSample{
+			{Name: "ruidoso.service", OOMKills: n}, {Name: "db.service", OOMKills: n},
+		})
+	}
+	obs(0)
+	obs(1)
+	evs := store.Recent(0)
+	if len(evs) != 1 || evs[0].Service != "db.service" {
+		t.Fatalf("eventos = %+v", evs)
+	}
+	// Al dejar de ignorarlo no se avisa de los OOM que ocurrieron mientras estaba ignorado.
+	d.SetIgnore(nil)
+	obs(1)
+	if n := len(store.Recent(0)); n != 1 {
+		t.Errorf("no deberían aparecer OOM antiguos: %d eventos", n)
 	}
 }

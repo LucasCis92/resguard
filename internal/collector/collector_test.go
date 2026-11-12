@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/LucasCis92/resguard/internal/metrics"
 )
@@ -31,6 +32,36 @@ func TestRing(t *testing.T) {
 	}
 	if got := r.Last(10); !reflect.DeepEqual(got, []int{3, 4, 5}) {
 		t.Errorf("Last(10) = %v", got)
+	}
+	if got := r.Resized(2).Last(0); !reflect.DeepEqual(got, []int{4, 5}) {
+		t.Errorf("Resized(2) = %v, quiero los 2 más recientes", got)
+	}
+	bigger := r.Resized(5)
+	bigger.Push(6)
+	if got := bigger.Last(0); !reflect.DeepEqual(got, []int{3, 4, 5, 6}) {
+		t.Errorf("Resized(5) + Push = %v", got)
+	}
+}
+
+func TestCollectorConfigure(t *testing.T) {
+	f := fakeRoot{t, t.TempDir()}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	c := New(Config{History: 10, Slices: []string{"system.slice"}}, &metrics.Reader{Root: f.root}, log)
+	for i := uint64(0); i < 6; i++ {
+		f.set(100*i, 100*i, 0, 0)
+		c.Tick()
+	}
+	if n := len(c.History(0)); n != 5 {
+		t.Fatalf("historial = %d muestras, quiero 5", n)
+	}
+	c.Configure(Config{Interval: time.Second, History: 3, Slices: []string{"otro.slice"}})
+	if n := len(c.History(0)); n != 3 || c.Interval() != time.Second {
+		t.Errorf("tras reconfigurar: %d muestras, intervalo %s", n, c.Interval())
+	}
+	f.set(700, 700, 0, 0)
+	c.Tick()
+	if svcs := c.Services(); len(svcs) != 0 {
+		t.Errorf("con otro slice no debería encontrar app.service: %+v", svcs)
 	}
 }
 

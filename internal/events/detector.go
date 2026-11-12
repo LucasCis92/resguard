@@ -2,6 +2,7 @@ package events
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/LucasCis92/resguard/internal/collector"
@@ -10,12 +11,12 @@ import (
 // Thresholds son los umbrales a partir de los cuales se considera que hay un pico.
 // Un valor 0 desactiva la regla correspondiente.
 type Thresholds struct {
-	CPU       float64 // % de uso de CPU
-	Memory    float64 // % de memoria usada
-	PSICPU    float64 // PSI cpu some avg10 (%)
-	PSIMemory float64 // PSI memory some avg10 (%)
-	PSIIO     float64 // PSI io some avg10 (%)
-	Sustain   int     // muestras seguidas por encima del umbral para abrir un pico
+	CPU       float64 `yaml:"cpu"`        // % de uso de CPU
+	Memory    float64 `yaml:"memory"`     // % de memoria usada
+	PSICPU    float64 `yaml:"psi_cpu"`    // PSI cpu some avg10 (%)
+	PSIMemory float64 `yaml:"psi_memory"` // PSI memory some avg10 (%)
+	PSIIO     float64 `yaml:"psi_io"`     // PSI io some avg10 (%)
+	Sustain   int     `yaml:"sustain"`    // muestras seguidas por encima del umbral para abrir un pico
 }
 
 // DefaultThresholds son valores razonables para un servidor de uso general.
@@ -74,12 +75,16 @@ type peakState struct {
 }
 
 // Detector analiza cada muestra del recolector y registra picos y OOM kills.
+// Es seguro reconfigurarlo (SetThresholds, SetIgnore) mientras recibe muestras.
 type Detector struct {
-	store  *Store
+	store *Store
+	topN  int
+
+	mu     sync.Mutex
 	rules  []Rule
 	state  []peakState
+	ignore func(service string) bool
 	oom    map[string]uint64 // último contador oom_kill visto por servicio
-	topN   int
 	seeded bool
 }
 
@@ -95,8 +100,50 @@ func NewDetector(store *Store, t Thresholds) *Detector {
 	}
 }
 
+// SetThresholds cambia los umbrales. Los picos en curso de un recurso que
+// sigue vigilado continúan abiertos; los de un recurso cuya alerta se
+// desactiva se cierran con un evento.
+func (d *Detector) SetThresholds(t Thresholds) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	rules := t.Rules()
+	state := make([]peakState, len(rules))
+	kept := map[string]bool{}
+	for i, r := range rules {
+		for j, old := range d.rules {
+			if old.Resource == r.Resource {
+				state[i] = d.state[j]
+				kept[r.Resource] = true
+			}
+		}
+	}
+	now := time.Now()
+	for j, old := range d.rules {
+		if st := d.state[j]; st.active && !kept[old.Resource] {
+			dur := now.Sub(st.start).Round(time.Second)
+			d.store.Add(Event{
+				Time: now, Kind: PeakEnd, Severity: Info,
+				Resource: old.Resource, Value: st.max, Threshold: old.High, Duration: dur.String(),
+				Message: fmt.Sprintf("pico de %s cerrado tras %s: la alerta se desactivó en la configuración (máximo %.1f%%)", old.Label, dur, st.max),
+			})
+		}
+	}
+	d.rules, d.state = rules, state
+}
+
+// SetIgnore indica qué servicios no deben generar incidencias. nil: ninguno.
+func (d *Detector) SetIgnore(ignore func(service string) bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.ignore = ignore
+}
+
 // Observe procesa una muestra. Tiene la firma de collector.Observer.
 func (d *Detector) Observe(s collector.Sample, services []collector.ServiceSample) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
 	var ctx *Context // se construye solo si hace falta
 	context := func() *Context {
 		if ctx == nil {
@@ -153,7 +200,10 @@ func (d *Detector) Observe(s collector.Sample, services []collector.ServiceSampl
 func (d *Detector) checkOOM(s collector.Sample, services []collector.ServiceSample, context func() *Context) {
 	seen := make(map[string]uint64, len(services))
 	for _, svc := range services {
-		seen[svc.Name] = svc.OOMKills
+		seen[svc.Name] = svc.OOMKills // se registra aunque se ignore, para no avisar de OOM antiguos si deja de ignorarse
+		if d.ignore != nil && d.ignore(svc.Name) {
+			continue
+		}
 		prev, known := d.oom[svc.Name]
 		// En la primera muestra solo se toma referencia: los OOM antiguos no son nuevos.
 		// Un servicio que aparece después sí se compara contra 0, porque su cgroup es nuevo.

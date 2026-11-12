@@ -29,6 +29,7 @@ type Watcher struct {
 	store   *events.Store
 	log     *slog.Logger
 	context func() *events.Context // estado del sistema para adjuntar a los eventos
+	ignored func(unit string) bool // servicios excluidos de las incidencias
 
 	state    map[string]unitState // último estado visto por unidad
 	reported map[string]string    // última InvocationID notificada por unidad
@@ -36,9 +37,10 @@ type Watcher struct {
 
 type unitState struct{ active, sub string }
 
-// NewWatcher crea un vigilante. contextFn puede ser nil.
-func NewWatcher(bus Bus, store *events.Store, log *slog.Logger, contextFn func() *events.Context) *Watcher {
-	return &Watcher{bus: bus, store: store, log: log, context: contextFn,
+// NewWatcher crea un vigilante. contextFn e ignored pueden ser nil. ignored se
+// consulta en cada caída, así que puede reflejar una configuración que cambia.
+func NewWatcher(bus Bus, store *events.Store, log *slog.Logger, contextFn func() *events.Context, ignored func(string) bool) *Watcher {
+	return &Watcher{bus: bus, store: store, log: log, context: contextFn, ignored: ignored,
 		state: map[string]unitState{}, reported: map[string]string{}}
 }
 
@@ -137,6 +139,9 @@ func (w *Watcher) handle(ctx context.Context, conn *sd.Conn, u *sd.PropertiesUpd
 	// por "auto-restart" o por ambos; report evita duplicados por InvocationID.
 	if (cur.sub == "auto-restart" && prev.sub != "auto-restart") ||
 		(cur.active == "failed" && prev.active != "failed") {
+		if w.ignored != nil && w.ignored(u.UnitName) {
+			return
+		}
 		w.report(ctx, conn, u.UnitName)
 	}
 }

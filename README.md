@@ -129,14 +129,51 @@ Los colores se desactivan con la variable de entorno `NO_COLOR=1`.
 Cada incidencia incluye un contexto con la CPU, la memoria, la PSI y los 3 servicios que más CPU
 y memoria consumían en ese momento.
 
-Umbrales por defecto (configurables con opciones del demonio; `resguardd -h` las lista todas):
+### Configuración
 
-| Recurso | Opción | Valor por defecto |
-|---------|--------|-------------------|
-| CPU | `-cpu-threshold` | 90 % (el pico termina al bajar de 80 %) |
-| Memoria | `-mem-threshold` | 90 % (termina al bajar de 85 %) |
-| PSI cpu / memoria / E/S | `-psi-cpu-threshold`, `-psi-mem-threshold`, `-psi-io-threshold` | 40 / 10 / 30 (terminan al bajar a la mitad) |
-| Muestras seguidas | `-sustain` | 2 |
+Los umbrales, el intervalo de muestreo y los servicios vigilados se ajustan en
+`/etc/resguard/config.yaml`. `make install` instala un ejemplo comentado con los valores por
+defecto y nunca sobrescribe uno existente. Todas las claves son opcionales.
+
+```yaml
+interval: 2s
+history: 1h
+thresholds:
+  cpu: 90
+  memory: 90
+  psi_cpu: 40
+  psi_memory: 10
+  psi_io: 30
+  sustain: 2
+services:
+  slices: [system.slice]
+  ignore: ["snap.*"]
+```
+
+| Clave | Significado | Por defecto |
+|-------|-------------|-------------|
+| `interval` | periodo de muestreo | `2s` |
+| `history` | historial en memoria para `history` y `watch` | `1h` |
+| `thresholds.cpu` / `memory` | % a partir del cual hay un pico; termina al bajar 10 / 5 puntos | 90 / 90 |
+| `thresholds.psi_*` | presión (PSI some avg10) de CPU, memoria y E/S; termina al bajar a la mitad | 40 / 10 / 30 |
+| `thresholds.sustain` | muestras seguidas por encima del umbral para registrar el pico | 2 |
+| `services.slices` | slices de cgroups donde buscar servicios | `[system.slice]` |
+| `services.ignore` | servicios que no generan incidencias; admite comodines | `[]` |
+
+Un umbral a `0` desactiva esa alerta. Para aplicar cambios:
+
+```bash
+sudo resguardd -check-config          # valida y muestra la configuración resultante
+sudo systemctl reload resguard        # aplica sin reiniciar: se conservan historial y picos en curso
+resguardctl config                    # configuración en uso
+```
+
+Si el archivo tiene un error, el servicio sigue con la configuración anterior y lo registra en el
+journal indicando la línea. Por seguridad, el archivo se rechaza si otros usuarios pueden
+modificarlo.
+
+Las opciones de `resguardd` equivalentes (`-interval`, `-cpu-threshold`, … ; ver `resguardd -h`)
+tienen prioridad sobre el archivo y están pensadas para el desarrollo.
 
 ## Desarrollo y pruebas locales
 
@@ -145,6 +182,7 @@ No hace falta root: el demonio puede vigilar los servicios de tu usuario (`syste
 ```bash
 make test                 # tests unitarios y de integración
 make dev                  # terminal 1: demonio en primer plano, con los logs
+make dev ARGS="-config deploy/config.yaml"   # probando un archivo de configuración
 make ctl                  # terminal 2: CLI interactiva
 make ctl ARGS=events      # o una orden suelta
 ```
