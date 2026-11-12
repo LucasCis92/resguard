@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# El workflow solo necesita leer el código: si una acción de terceros fuera
+# comprometida, no podría escribir en el repo ni publicar nada.
+permissions:
+  contents: read
+
+# Un push nuevo cancela la ejecución anterior de la misma rama.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # La versión mínima declarada en go.mod y la última estable.
+        go: [go.mod, stable]
+    steps:
+      # Las acciones se fijan por commit (no por etiqueta, que su dueño podría mover).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: ${{ matrix.go == 'go.mod' && 'go.mod' || '' }}
+          go-version: ${{ matrix.go == 'stable' && 'stable' || '' }}
+
+      - name: Formato (gofmt)
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Archivos sin formatear (ejecuta 'make fmt'):"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Análisis estático (go vet)
+        run: go vet ./...
+
+      - name: Tests con detector de carreras
+        run: go test -race -count=1 ./...
+
+      - name: Compilación
+        run: make build
+
+      - name: Los binarios no contienen rutas de la máquina que compila
+        run: |
+          if grep -l "$HOME" bin/*; then
+            echo "Un binario contiene rutas locales: falta -trimpath en la compilación"
+            exit 1
+          fi
+
+  vulns:
+    name: Vulnerabilidades conocidas (govulncheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
