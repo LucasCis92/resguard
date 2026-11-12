@@ -78,7 +78,7 @@ func run(log *slog.Logger, socketPath, group string, interval, history time.Dura
 
 	srv := daemon.NewServer(socketPath, log)
 	srv.SetSocketGroup(group)
-	registerCommands(srv, col, store)
+	registerCommands(srv, col, store, interval)
 
 	log.Info("iniciando resguardd", "version", version.Version, "interval", interval,
 		"slices", slices, "events_file", eventsFile, "systemd", bus)

@@ -94,16 +94,29 @@ y el demonio recupera las más recientes al reiniciarse.
 ```bash
 resguardctl            # modo interactivo
 resguardctl status     # orden única
+resguardctl watch      # vista en vivo
 ```
 
 | Orden | Qué muestra |
 |-------|-------------|
 | `status` | CPU, memoria, swap, carga, PSI y número de incidencias en la última hora |
+| `watch [segundos]` | vista en vivo a pantalla completa: barras de uso, servicios que más consumen e incidencias recientes. `c`/`m` ordenan por CPU o memoria, `q` sale |
 | `history [n]` | las últimas *n* muestras (20 por defecto) |
 | `services [cpu\|mem] [n]` | los servicios que más consumen, con su límite de memoria y sus OOM kills |
 | `events [n]` | las últimas *n* incidencias |
 | `event <id>` | el detalle de una incidencia, con el estado del sistema y los servicios que más consumían |
-| `ping`, `version`, `help` | utilidades |
+| `help` | todas las órdenes con su uso |
+
+En el modo interactivo:
+
+- **Flechas arriba/abajo**: historial de órdenes, que se conserva entre sesiones en
+  `~/.local/state/resguard/history` (solo legible por tu usuario). Como en bash, las líneas que
+  empiezan por espacio no se guardan.
+- **Tab**: autocompleta órdenes y argumentos; si hay varias opciones, las muestra.
+- **Ctrl+D**, **Ctrl+C** o `exit`: salir.
+- Si el demonio se reinicia, la CLI se reconecta sola.
+
+Los colores se desactivan con la variable de entorno `NO_COLOR=1`.
 
 ### Incidencias que se registran
 

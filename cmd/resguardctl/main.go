@@ -4,14 +4,15 @@
 //
 //	resguardctl            # modo interactivo
 //	resguardctl status     # orden única
+//	resguardctl watch      # vista en vivo
 package main
 
 import (
-	"bufio"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
-	"strings"
 
 	"github.com/LucasCis92/resguard/internal/ipc"
 )
@@ -20,57 +21,31 @@ func main() {
 	socketPath := flag.String("socket", ipc.DefaultSocketPath, "ruta del socket Unix del demonio")
 	flag.Parse()
 
-	client, err := ipc.Dial(*socketPath)
+	s, err := newSession(*socketPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		if errors.Is(err, fs.ErrPermission) {
+			fmt.Fprintln(os.Stderr, "Sugerencia: usa sudo, o añade tu usuario al grupo resguard (sudo usermod -aG resguard $USER) y vuelve a iniciar sesión.")
+		}
 		os.Exit(1)
 	}
-	defer client.Close()
+	defer s.close()
 
-	if flag.NArg() > 0 {
-		if !run(client, flag.Args()) {
-			os.Exit(1)
-		}
+	if flag.NArg() == 0 {
+		repl(s)
 		return
 	}
-	repl(client)
-}
 
-// run ejecuta una orden e imprime el resultado. Devuelve false si falló.
-func run(client *ipc.Client, fields []string) bool {
-	resp, err := client.Call(fields[0], fields[1:]...)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return false
-	}
-	if !resp.OK {
-		fmt.Fprintln(os.Stderr, "error:", resp.Error)
-		return false
-	}
-	if resp.Output != "" {
-		fmt.Println(resp.Output)
-	}
-	return true
-}
-
-func repl(client *ipc.Client) {
-	fmt.Println(`resguardctl: escribe "help" para ver las órdenes, "exit" para salir.`)
-	in := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("resguardctl> ")
-		if !in.Scan() {
-			fmt.Println()
-			return
+	args := flag.Args()
+	switch args[0] {
+	case "watch":
+		if err := watch(s, args[1:], false); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
 		}
-		fields := strings.Fields(in.Text())
-		if len(fields) == 0 {
-			continue
-		}
-		switch fields[0] {
-		case "exit", "quit":
-			return
-		default:
-			run(client, fields)
+	default:
+		if !s.run(args, os.Stdout) {
+			os.Exit(1)
 		}
 	}
 }

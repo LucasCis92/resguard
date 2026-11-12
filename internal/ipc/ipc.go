@@ -8,6 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"time"
+
+	"github.com/LucasCis92/resguard/internal/collector"
+	"github.com/LucasCis92/resguard/internal/events"
 )
 
 // DefaultSocketPath es la ruta por defecto del socket del demonio.
@@ -20,11 +24,37 @@ type Request struct {
 	Args    []string `json:"args,omitempty"`
 }
 
-// Response es la contestación del demonio.
+// Response es la contestación del demonio. Output es texto listo para mostrar;
+// Data, si existe, son datos estructurados para que la CLI los presente a su
+// manera (p. ej. la vista "watch").
 type Response struct {
-	OK     bool   `json:"ok"`
-	Output string `json:"output,omitempty"`
-	Error  string `json:"error,omitempty"`
+	OK     bool            `json:"ok"`
+	Output string          `json:"output,omitempty"`
+	Data   json.RawMessage `json:"data,omitempty"`
+	Error  string          `json:"error,omitempty"`
+}
+
+// Decode interpreta Data en v.
+func (r Response) Decode(v any) error {
+	if len(r.Data) == 0 {
+		return fmt.Errorf("la respuesta no contiene datos")
+	}
+	return json.Unmarshal(r.Data, v)
+}
+
+// CommandInfo describe una orden del demonio (respuesta de datos de "help").
+type CommandInfo struct {
+	Name        string `json:"name"`
+	Usage       string `json:"usage,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// Snapshot es el estado completo que usa la vista "watch" (orden "snapshot").
+type Snapshot struct {
+	Sample   collector.Sample          `json:"sample"`
+	Services []collector.ServiceSample `json:"services"`
+	Events   []events.Event            `json:"events"`
+	Interval time.Duration             `json:"interval"`
 }
 
 // Client mantiene una conexión abierta con el demonio.

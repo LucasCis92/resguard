@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,16 @@ func startServer(t *testing.T) (*ipc.Client, string) {
 	srv := NewServer(sock, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	srv.Handle("echo", func(args []string) (string, error) { return strings.Join(args, " "), nil })
 	srv.Handle("fail", func([]string) (string, error) { return "", errors.New("algo salió mal") })
+	srv.Register(Command{
+		Name: "stats", Usage: "stats [n]", Description: "estadísticas de prueba",
+		Text: func([]string) (string, error) { return "texto", nil },
+		Data: func(args []string) (any, error) {
+			n, err := strconv.Atoi(args[0])
+			return map[string]int{"n": n}, err
+		},
+	})
+	srv.Register(Command{Name: "interna", Hidden: true,
+		Data: func([]string) (any, error) { return map[string]int{}, nil }})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -67,8 +78,33 @@ func TestServerRoundTrip(t *testing.T) {
 	}
 
 	resp, err = c.Call("help")
-	if err != nil || !strings.Contains(resp.Output, "echo, fail, help") {
+	if err != nil || !resp.OK {
 		t.Fatalf("help: %+v, %v", resp, err)
+	}
+	var infos []ipc.CommandInfo
+	if err := resp.Decode(&infos); err != nil {
+		t.Fatalf("help sin datos: %v", err)
+	}
+	var names []string
+	for _, in := range infos {
+		names = append(names, in.Name)
+	}
+	if got := strings.Join(names, ","); got != "echo,fail,help,stats" {
+		t.Errorf("órdenes en help = %s (la oculta no debe aparecer)", got)
+	}
+	if !strings.Contains(resp.Output, "stats [n]") || !strings.Contains(resp.Output, "estadísticas de prueba") {
+		t.Errorf("la ayuda no muestra uso y descripción:\n%s", resp.Output)
+	}
+
+	resp, err = c.Call("stats", "3")
+	var got map[string]int
+	if err != nil || !resp.OK || resp.Output != "texto" || resp.Decode(&got) != nil || got["n"] != 3 {
+		t.Fatalf("orden con texto y datos: %+v, %v, %v", resp, err, got)
+	}
+
+	resp, err = c.Call("interna")
+	if err != nil || !resp.OK || resp.Decode(&got) != nil {
+		t.Fatalf("una orden oculta debe poder llamarse: %+v, %v", resp, err)
 	}
 
 	fi, err := os.Stat(sock)

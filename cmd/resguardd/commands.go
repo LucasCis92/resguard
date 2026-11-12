@@ -12,19 +12,37 @@ import (
 	"github.com/LucasCis92/resguard/internal/collector"
 	"github.com/LucasCis92/resguard/internal/daemon"
 	"github.com/LucasCis92/resguard/internal/events"
+	"github.com/LucasCis92/resguard/internal/ipc"
 	"github.com/LucasCis92/resguard/internal/version"
 )
 
 var errNoSample = errors.New("todavía no hay muestras; espera un par de segundos")
 
-func registerCommands(srv *daemon.Server, col *collector.Collector, store *events.Store) {
-	srv.Handle("ping", func([]string) (string, error) { return "pong", nil })
-	srv.Handle("version", func([]string) (string, error) { return version.Version, nil })
-	srv.Handle("status", func([]string) (string, error) { return status(col, store) })
-	srv.Handle("history", func(args []string) (string, error) { return historyCmd(col, args) })
-	srv.Handle("services", func(args []string) (string, error) { return servicesCmd(col, args) })
-	srv.Handle("events", func(args []string) (string, error) { return eventsCmd(store, args) })
-	srv.Handle("event", func(args []string) (string, error) { return eventCmd(store, args) })
+func registerCommands(srv *daemon.Server, col *collector.Collector, store *events.Store, interval time.Duration) {
+	srv.Register(daemon.Command{Name: "ping", Description: "comprueba que el demonio responde",
+		Text: func([]string) (string, error) { return "pong", nil }})
+	srv.Register(daemon.Command{Name: "version", Description: "versión del demonio",
+		Text: func([]string) (string, error) { return version.Version, nil }})
+	srv.Register(daemon.Command{Name: "status", Description: "resumen del estado del sistema",
+		Text: func([]string) (string, error) { return status(col, store) }})
+	srv.Register(daemon.Command{Name: "history", Usage: "history [n]", Description: "últimas n muestras (20 por defecto)",
+		Text: func(args []string) (string, error) { return historyCmd(col, args) }})
+	srv.Register(daemon.Command{Name: "services", Usage: "services [cpu|mem] [n]", Description: "servicios que más consumen",
+		Text: func(args []string) (string, error) { return servicesCmd(col, args) }})
+	srv.Register(daemon.Command{Name: "events", Usage: "events [n]", Description: "últimas n incidencias (20 por defecto)",
+		Text: func(args []string) (string, error) { return eventsCmd(store, args) }})
+	srv.Register(daemon.Command{Name: "event", Usage: "event <id>", Description: "detalle de una incidencia",
+		Text: func(args []string) (string, error) { return eventCmd(store, args) }})
+
+	// Estado completo para la vista "watch" de la CLI.
+	srv.Register(daemon.Command{Name: "snapshot", Hidden: true,
+		Data: func([]string) (any, error) {
+			s, ok := col.Latest()
+			if !ok {
+				return nil, errNoSample
+			}
+			return ipc.Snapshot{Sample: s, Services: col.Services(), Events: store.Recent(5), Interval: interval}, nil
+		}})
 }
 
 func status(col *collector.Collector, store *events.Store) (string, error) {

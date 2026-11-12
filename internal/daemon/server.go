@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/LucasCis92/resguard/internal/ipc"
 )
@@ -22,18 +23,29 @@ import (
 // Handler procesa una orden y devuelve el texto a mostrar en la CLI.
 type Handler func(args []string) (string, error)
 
+// Command describe una orden del demonio. Debe tener Text, Data o ambos.
+type Command struct {
+	Name        string
+	Usage       string // p. ej. "services [cpu|mem] [n]"
+	Description string
+	Hidden      bool // no aparece en "help" (órdenes internas de la CLI)
+
+	Text func(args []string) (string, error) // salida en texto
+	Data func(args []string) (any, error)    // salida estructurada
+}
+
 // Server escucha en un socket Unix y despacha órdenes a sus handlers.
 type Server struct {
 	socketPath string
 	group      string
 	log        *slog.Logger
-	handlers   map[string]Handler
+	commands   map[string]Command
 }
 
 // NewServer crea un servidor que escuchará en socketPath.
 func NewServer(socketPath string, log *slog.Logger) *Server {
-	s := &Server{socketPath: socketPath, log: log, handlers: map[string]Handler{}}
-	s.Handle("help", s.help)
+	s := &Server{socketPath: socketPath, log: log, commands: map[string]Command{}}
+	s.Register(Command{Name: "help", Description: "muestra esta ayuda"})
 	return s
 }
 
@@ -41,10 +53,11 @@ func NewServer(socketPath string, log *slog.Logger) *Server {
 // sus miembros puedan usar la CLI sin ser root. Vacío deja el grupo por defecto.
 func (s *Server) SetSocketGroup(group string) { s.group = group }
 
-// Handle registra el handler de una orden.
-func (s *Server) Handle(command string, h Handler) {
-	s.handlers[command] = h
-}
+// Register registra una orden.
+func (s *Server) Register(c Command) { s.commands[c.Name] = c }
+
+// Handle registra una orden de texto sin descripción.
+func (s *Server) Handle(name string, h Handler) { s.Register(Command{Name: name, Text: h}) }
 
 // Run escucha hasta que ctx se cancela.
 func (s *Server) Run(ctx context.Context) error {
@@ -125,22 +138,60 @@ func (s *Server) serve(conn net.Conn) {
 }
 
 func (s *Server) dispatch(req ipc.Request) ipc.Response {
-	h, ok := s.handlers[req.Command]
+	if req.Command == "help" {
+		return s.help()
+	}
+	c, ok := s.commands[req.Command]
 	if !ok {
 		return ipc.Response{Error: fmt.Sprintf("orden desconocida %q (prueba \"help\")", req.Command)}
 	}
-	out, err := h(req.Args)
-	if err != nil {
-		return ipc.Response{Error: err.Error()}
+
+	var resp ipc.Response
+	if c.Text != nil {
+		out, err := c.Text(req.Args)
+		if err != nil {
+			return ipc.Response{Error: err.Error()}
+		}
+		resp.Output = out
 	}
-	return ipc.Response{OK: true, Output: out}
+	if c.Data != nil {
+		v, err := c.Data(req.Args)
+		if err != nil {
+			return ipc.Response{Error: err.Error()}
+		}
+		data, err := json.Marshal(v)
+		if err != nil {
+			s.log.Error("codificando respuesta", "command", c.Name, "err", err)
+			return ipc.Response{Error: "error interno codificando la respuesta"}
+		}
+		resp.Data = data
+	}
+	resp.OK = true
+	return resp
 }
 
-func (s *Server) help([]string) (string, error) {
-	names := make([]string, 0, len(s.handlers))
-	for name := range s.handlers {
-		names = append(names, name)
+// help devuelve la lista de órdenes como texto y como datos (para autocompletar).
+func (s *Server) help() ipc.Response {
+	var infos []ipc.CommandInfo
+	for _, c := range s.commands {
+		if c.Hidden {
+			continue
+		}
+		usage := c.Usage
+		if usage == "" {
+			usage = c.Name
+		}
+		infos = append(infos, ipc.CommandInfo{Name: c.Name, Usage: usage, Description: c.Description})
 	}
-	sort.Strings(names)
-	return "Órdenes disponibles: " + strings.Join(names, ", "), nil
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+
+	var b strings.Builder
+	tw := tabwriter.NewWriter(&b, 0, 0, 3, ' ', 0)
+	for _, in := range infos {
+		fmt.Fprintf(tw, "  %s\t%s\n", in.Usage, in.Description)
+	}
+	tw.Flush()
+
+	data, _ := json.Marshal(infos)
+	return ipc.Response{OK: true, Output: "Órdenes del demonio:\n" + strings.TrimRight(b.String(), "\n"), Data: data}
 }
