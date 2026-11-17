@@ -11,6 +11,7 @@ import (
 // localCommands son las órdenes que resuelve la propia CLI, sin el demonio.
 var localCommands = []ipc.CommandInfo{
 	{Name: "watch", Usage: "watch [segundos]", Description: "vista en vivo de métricas, servicios e incidencias"},
+	{Name: "logs", Usage: "logs [n] [avisos] [seguir]", Description: "logs del servicio (journal); seguir = en vivo, Ctrl+C para volver"},
 	{Name: "clear", Description: "limpia la pantalla"},
 	{Name: "exit", Description: "sale (también Ctrl+D o Ctrl+C)"},
 }

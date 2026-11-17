@@ -79,15 +79,7 @@ sudo systemctl enable --now resguard
 sudo usermod -aG resguard "$USER"     # opcional: usar la CLI sin sudo (requiere volver a iniciar sesión)
 ```
 
-Los logs, incluidas todas las incidencias, van al journal:
-
-```bash
-journalctl -u resguard -f
-journalctl -u resguard -p warning     # solo picos, OOM kills y caídas
-```
-
-Además, las incidencias se guardan en `/var/lib/resguard/events.jsonl` (una por línea, en JSON),
-y el demonio recupera las más recientes al reiniciarse.
+Para ver los logs y diagnosticar problemas, consulta [Logs y diagnóstico](#logs-y-diagnóstico).
 
 ### CLI
 
@@ -102,9 +94,11 @@ resguardctl watch      # vista en vivo
 | `status` | CPU, memoria, swap, carga, PSI y número de incidencias en la última hora |
 | `watch [segundos]` | vista en vivo a pantalla completa: barras de uso, servicios que más consumen e incidencias recientes. `c`/`m` ordenan por CPU o memoria, `q` sale |
 | `history [n]` | las últimas *n* muestras (20 por defecto) |
-| `services [cpu\|mem] [n]` | los servicios que más consumen, con su límite de memoria y sus OOM kills |
+| `services [cpu\|mem] [apps\|servicios\|contenedores\|sesiones] [n]` | lo que más consume, con su tipo, límite de memoria y OOM kills. Por ejemplo, `services apps mem` muestra las aplicaciones que más memoria usan |
 | `events [n]` | las últimas *n* incidencias |
-| `event <id>` | el detalle de una incidencia, con el estado del sistema y los servicios que más consumían |
+| `event <id>` | el detalle de una incidencia, con el estado del sistema y lo que más consumía en ese momento |
+| `logs [n] [avisos] [seguir]` | los logs del servicio: las últimas *n* líneas (50 por defecto), solo avisos y errores, o en vivo (`Ctrl+C` vuelve a la CLI) |
+| `config` | la configuración en uso y de qué archivo se cargó |
 | `help` | todas las órdenes con su uso |
 
 En el modo interactivo:
@@ -126,8 +120,18 @@ Los colores se desactivan con la variable de entorno `NO_COLOR=1`.
 | `oom_kill` | el contador `oom_kill` del cgroup de un servicio aumenta (incluso si el servicio sobrevive) |
 | `service_failed` | systemd informa de que un servicio cayó: código de salida, señal, OOM, timeout, watchdog… y si se reiniciará |
 
-Cada incidencia incluye un contexto con la CPU, la memoria, la PSI y los 3 servicios que más CPU
-y memoria consumían en ese momento.
+Cada incidencia incluye un contexto con la CPU, la memoria, la PSI y lo que más CPU y memoria
+consumía en ese momento. Se vigilan:
+
+| Tipo | Ejemplos | Cómo se muestra |
+|------|----------|-----------------|
+| servicio | `nginx.service`, `mariadb.service` | el nombre de la unidad |
+| app | Chrome, VS Code, Terminal | el nombre de la aplicación (`app-com.google.Chrome-5016.scope` → `Chrome`) |
+| contenedor | contenedores Docker y Podman | el nombre del contenedor (`laravel_app`) |
+| sesión | sesiones de ssh o consola | `sesión 6` |
+
+Las aplicaciones se ven gracias a `user.slice` en `services.slices`; quítalo de la configuración si
+no quieres que los miembros del grupo `resguard` vean qué aplicaciones usan los demás usuarios.
 
 ### Configuración
 
@@ -146,7 +150,7 @@ thresholds:
   psi_io: 30
   sustain: 2
 services:
-  slices: [system.slice]
+  slices: [system.slice, user.slice]
   ignore: ["snap.*"]
 ```
 
@@ -157,8 +161,8 @@ services:
 | `thresholds.cpu` / `memory` | % a partir del cual hay un pico; termina al bajar 10 / 5 puntos | 90 / 90 |
 | `thresholds.psi_*` | presión (PSI some avg10) de CPU, memoria y E/S; termina al bajar a la mitad | 40 / 10 / 30 |
 | `thresholds.sustain` | muestras seguidas por encima del umbral para registrar el pico | 2 |
-| `services.slices` | slices de cgroups donde buscar servicios | `[system.slice]` |
-| `services.ignore` | servicios que no generan incidencias; admite comodines | `[]` |
+| `services.slices` | slices de cgroups donde buscar qué vigilar: `system.slice` (servicios y contenedores) y `user.slice` (aplicaciones de escritorio) | `[system.slice, user.slice]` |
+| `services.ignore` | unidades que no generan incidencias; admite comodines (`snap.*`, `docker-*`, `app-*`) | `[]` |
 
 Un umbral a `0` desactiva esa alerta. Para aplicar cambios:
 
@@ -174,6 +178,36 @@ modificarlo.
 
 Las opciones de `resguardd` equivalentes (`-interval`, `-cpu-threshold`, … ; ver `resguardd -h`)
 tienen prioridad sobre el archivo y están pensadas para el desarrollo.
+
+### Logs y diagnóstico
+
+Lo más habitual se puede hacer desde la CLI, sin recordar comandos de systemd:
+
+| Para… | Desde la CLI | Con las herramientas del sistema |
+|-------|--------------|----------------------------------|
+| ver si el servicio funciona | `resguardctl status` | `systemctl status resguard` |
+| ver los logs recientes | `resguardctl logs` | `journalctl -u resguard -n 50` |
+| ver solo avisos y errores | `resguardctl logs avisos` | `journalctl -u resguard -p warning` |
+| seguir los logs en vivo | `resguardctl logs seguir` | `journalctl -u resguard -f` |
+| ver los logs desde una hora | — | `journalctl -u resguard --since "2026-11-17 11:00" --until "11:30"` |
+| ver las incidencias | `resguardctl events` | `sudo tail /var/lib/resguard/events.jsonl` |
+| entender una incidencia | `resguardctl event <id>` | — |
+| ver qué consume ahora | `resguardctl services` o `resguardctl watch` | — |
+| ver la configuración en uso | `resguardctl config` | `sudo resguardd -check-config` |
+| validar la configuración tras editarla | — | `sudo resguardd -check-config` |
+| aplicar la configuración | — | `sudo systemctl reload resguard` |
+| reiniciar el servicio | — | `sudo systemctl restart resguard` |
+
+Notas:
+
+- Para leer el journal sin `sudo`, tu usuario debe pertenecer al grupo `adm` o `systemd-journal`
+  (en Ubuntu, el primer usuario ya está en `adm`).
+- `events` muestra las incidencias que el demonio tiene en memoria (las últimas 1000). El registro
+  completo está en `/var/lib/resguard/events.jsonl`, una incidencia por línea en JSON, legible solo
+  por root. Con `jq` se puede filtrar, por ejemplo las caídas de servicios:
+  `sudo jq -c 'select(.kind == "service_failed")' /var/lib/resguard/events.jsonl`.
+- Si la CLI dice "permission denied", tu sesión todavía no tiene el grupo `resguard`: cierra sesión
+  y vuelve a entrar, o usa `sudo resguardctl`.
 
 ## Desarrollo y pruebas locales
 

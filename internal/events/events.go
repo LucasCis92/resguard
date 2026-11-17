@@ -72,8 +72,18 @@ type Context struct {
 // ServiceUsage es el consumo de un servicio dentro de un Context.
 type ServiceUsage struct {
 	Name       string  `json:"name"`
+	Display    string  `json:"display,omitempty"`
+	Kind       string  `json:"kind,omitempty"`
 	CPUPercent float64 `json:"cpu_percent"`
 	MemBytes   uint64  `json:"mem_bytes"`
+}
+
+// Label devuelve el nombre legible, o el de la unidad si no hay otro.
+func (u ServiceUsage) Label() string {
+	if u.Display != "" {
+		return u.Display
+	}
+	return u.Name
 }
 
 // NewContext construye el contexto a partir de una muestra, con los topN
@@ -87,6 +97,7 @@ func NewContext(s collector.Sample, services []collector.ServiceSample, topN int
 		PSIMemory:      s.PSI.Memory.Avg10,
 		PSIIO:          s.PSI.IO.Avg10,
 	}
+	services = collector.Grouped(services)
 	ctx.TopCPU = top(services, topN, func(a, b collector.ServiceSample) bool { return a.CPUPercent > b.CPUPercent })
 	ctx.TopMemory = top(services, topN, func(a, b collector.ServiceSample) bool { return a.MemBytes > b.MemBytes })
 	return ctx
@@ -100,7 +111,7 @@ func top(services []collector.ServiceSample, n int, less func(a, b collector.Ser
 	}
 	out := make([]ServiceUsage, len(sorted))
 	for i, s := range sorted {
-		out[i] = ServiceUsage{Name: s.Name, CPUPercent: s.CPUPercent, MemBytes: s.MemBytes}
+		out[i] = ServiceUsage{Name: s.Name, Display: s.Display, Kind: s.Kind, CPUPercent: s.CPUPercent, MemBytes: s.MemBytes}
 	}
 	return out
 }
@@ -205,10 +216,10 @@ func (s *Store) logEvent(e Event) {
 	if c := e.Context; c != nil {
 		attrs = append(attrs, "cpu", round1(c.CPUPercent), "mem", round1(c.MemUsedPercent))
 		if len(c.TopCPU) > 0 {
-			attrs = append(attrs, "top_cpu", c.TopCPU[0].Name)
+			attrs = append(attrs, "top_cpu", c.TopCPU[0].Label())
 		}
 		if len(c.TopMemory) > 0 {
-			attrs = append(attrs, "top_mem", c.TopMemory[0].Name)
+			attrs = append(attrs, "top_mem", c.TopMemory[0].Label())
 		}
 	}
 	switch e.Severity {

@@ -211,7 +211,7 @@ func (d *Detector) checkOOM(s collector.Sample, services []collector.ServiceSamp
 			continue
 		}
 		n := svc.OOMKills - prev
-		msg := fmt.Sprintf("el OOM killer mató %d proceso(s) de %s (uso actual %s", n, svc.Name, formatBytes(svc.MemBytes))
+		msg := fmt.Sprintf("el OOM killer mató %d proceso(s) de %s (uso actual %s", n, svc.Label(), formatBytes(svc.MemBytes))
 		if svc.MemMax > 0 {
 			msg += " de un límite de " + formatBytes(svc.MemMax)
 		}

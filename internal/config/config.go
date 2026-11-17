@@ -39,9 +39,9 @@ type Config struct {
 
 // Services indica qué servicios se vigilan.
 type Services struct {
-	// Slices de cgroups donde buscar servicios.
+	// Slices de cgroups donde buscar servicios, aplicaciones y contenedores.
 	Slices []string `yaml:"slices"`
-	// Servicios que no generan incidencias. Admite comodines: "snap.*".
+	// Unidades que no generan incidencias. Admite comodines: "snap.*".
 	Ignore []string `yaml:"ignore"`
 }
 
@@ -51,7 +51,7 @@ func Default() Config {
 		Interval:   2 * time.Second,
 		History:    time.Hour,
 		Thresholds: events.DefaultThresholds,
-		Services:   Services{Slices: []string{"system.slice"}},
+		Services:   Services{Slices: []string{"system.slice", "user.slice"}},
 	}
 }
 

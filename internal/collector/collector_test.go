@@ -134,3 +134,49 @@ func TestCollectorTick(t *testing.T) {
 		t.Errorf("historial = %+v", h)
 	}
 }
+
+func TestNewUnitCPU(t *testing.T) {
+	f := fakeRoot{t, t.TempDir()}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	c := New(Config{History: 10, Slices: []string{"system.slice"}}, &metrics.Reader{Root: f.root}, log)
+	f.set(0, 0, 0, 0)
+	c.Tick()
+	time.Sleep(20 * time.Millisecond)
+
+	// Aparece una unidad que ya consumió 5 ms de CPU: es del último intervalo.
+	f.write("sys/fs/cgroup/system.slice/nueva.service/cpu.stat", "usage_usec 5000\n")
+	// Y otra con una hora de CPU acumulada: imposible en un intervalo, no se cuenta.
+	f.write("sys/fs/cgroup/system.slice/vieja.service/cpu.stat", "usage_usec 3600000000\n")
+	f.set(100, 100, 0, 0)
+	c.Tick()
+
+	got := map[string]float64{}
+	for _, s := range c.Services() {
+		got[s.Name] = s.CPUPercent
+	}
+	if got["nueva.service"] <= 0 {
+		t.Errorf("una unidad nueva debe contar su consumo: %v", got)
+	}
+	if got["vieja.service"] != 0 {
+		t.Errorf("una unidad con más CPU de la posible en el intervalo no debe contarse: %v", got)
+	}
+}
+
+func TestGrouped(t *testing.T) {
+	in := []ServiceSample{
+		{Name: "app-com.google.Chrome-5016.scope", Display: "Chrome", Kind: "app", CPUPercent: 30, MemBytes: 100},
+		{Name: "nginx.service", Kind: "servicio", CPUPercent: 5, MemBytes: 10, MemMax: 50},
+		{Name: `app-gnome-google\x2dchrome-5016.scope`, Display: "Chrome", Kind: "app", CPUPercent: 10, MemBytes: 300, OOMKills: 1},
+		{Name: "otro.service", Display: "Chrome", Kind: "servicio", CPUPercent: 1}, // mismo nombre, otro tipo: no se une
+	}
+	out := Grouped(in)
+	if len(out) != 3 {
+		t.Fatalf("grupos = %+v", out)
+	}
+	if c := out[0]; c.Label() != "Chrome" || c.CPUPercent != 40 || c.MemBytes != 400 || c.OOMKills != 1 || c.MemMax != 0 {
+		t.Errorf("Chrome agrupado = %+v", c)
+	}
+	if in[0].CPUPercent != 30 {
+		t.Error("Grouped no debe modificar la entrada")
+	}
+}

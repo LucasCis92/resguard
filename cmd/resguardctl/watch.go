@@ -207,7 +207,7 @@ func render(snap ipc.Snapshot, snapErr error, v view) string {
 	// Las incidencias van al pie; los servicios ocupan el espacio que queda.
 	evLines := 2 + max(1, len(snap.Events))
 	rows := v.height - len(lines) - 2 - evLines
-	services := append([]collector.ServiceSample(nil), snap.Services...)
+	services := collector.Grouped(snap.Services)
 	sort.SliceStable(services, func(i, j int) bool {
 		if v.sortBy == "mem" {
 			return services[i].MemBytes > services[j].MemBytes
@@ -217,20 +217,20 @@ func render(snap ipc.Snapshot, snapErr error, v view) string {
 
 	nameW := 8
 	for _, svc := range services {
-		nameW = max(nameW, min(40, utf8.RuneCountInString(svc.Name)))
+		nameW = max(nameW, min(32, utf8.RuneCountInString(svc.Label())))
 	}
 	order := "CPU"
 	if v.sortBy == "mem" {
 		order = "memoria"
 	}
-	add("%s", v.paint(ansiBold, fmt.Sprintf("%-*s  %6s  %10s  %10s   (por %s)", nameW, "SERVICIO", "CPU%", "MEMORIA", "LÍMITE", order)))
+	add("%s", v.paint(ansiBold, fmt.Sprintf("%-*s  %-10s  %6s  %10s  %10s   (por %s)", nameW, "NOMBRE", "TIPO", "CPU%", "MEMORIA", "LÍMITE", order)))
 	for i := 0; i < len(services) && i < rows; i++ {
 		svc := services[i]
 		limit := "-"
 		if svc.MemMax > 0 {
 			limit = mib(svc.MemMax)
 		}
-		add("%-*s  %6.1f  %10s  %10s", nameW, ellipsis(svc.Name, nameW), svc.CPUPercent, mib(svc.MemBytes), limit)
+		add("%-*s  %-10s  %6.1f  %10s  %10s", nameW, ellipsis(svc.Label(), nameW), svc.Kind, svc.CPUPercent, mib(svc.MemBytes), limit)
 	}
 	if len(services) == 0 {
 		add("(no se encontraron servicios)")

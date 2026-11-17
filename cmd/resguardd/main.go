@@ -105,12 +105,37 @@ func main() {
 		return
 	}
 
-	// Bajo systemd, stderr va al journal.
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	// Bajo systemd, stderr va al journal, que ya añade la hora a cada línea.
+	var hopts slog.HandlerOptions
+	if stderrIsJournal() {
+		hopts.ReplaceAttr = func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) == 0 && a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		}
+	}
+	log := slog.New(slog.NewTextHandler(os.Stderr, &hopts))
 	if err := run(log, opts, loader); err != nil {
 		log.Error("el demonio terminó con error", "err", err)
 		os.Exit(1)
 	}
+}
+
+// stderrIsJournal indica si stderr está conectado al journal. JOURNAL_STREAM
+// lo heredan también los procesos lanzados desde un servicio (p. ej. una
+// terminal de VS Code), así que se compara con el dispositivo e inodo reales
+// de stderr, como recomienda systemd.
+func stderrIsJournal() bool {
+	var dev, ino uint64
+	if _, err := fmt.Sscanf(os.Getenv("JOURNAL_STREAM"), "%d:%d", &dev, &ino); err != nil {
+		return false
+	}
+	var st syscall.Stat_t
+	if err := syscall.Fstat(int(os.Stderr.Fd()), &st); err != nil {
+		return false
+	}
+	return uint64(st.Dev) == dev && uint64(st.Ino) == ino
 }
 
 // loadedConfig es una configuración junto con su origen.

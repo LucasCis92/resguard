@@ -33,9 +33,17 @@ thresholds:
   sustain: 2
 
 services:
-  # Dónde buscar servicios (slices de cgroups v2).
+  # Dónde buscar qué vigilar (slices de cgroups v2):
+  #   system.slice  servicios del sistema y contenedores Docker
+  #   user.slice    aplicaciones de las sesiones de escritorio (Chrome, VS Code…)
+  # Quita user.slice si no quieres que los miembros del grupo resguard vean
+  # qué aplicaciones usan los demás usuarios de este equipo.
   slices:
     - system.slice
-  # Servicios que no generan incidencias (ni caídas ni OOM kills).
-  # Admite comodines, por ejemplo: "snap.*" o "user@*.service".
+    - user.slice
+  # Unidades que no generan incidencias (ni caídas ni OOM kills). Se comparan
+  # con el nombre de la unidad y admiten comodines, por ejemplo:
+  #   "snap.*"     servicios de snap
+  #   "docker-*"   todos los contenedores Docker
+  #   "app-*"      todas las aplicaciones de escritorio
   ignore: []

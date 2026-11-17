@@ -29,8 +29,10 @@ type Sample struct {
 
 // ServiceSample es el uso de recursos de un servicio en una muestra.
 type ServiceSample struct {
-	Name       string  `json:"name"`
-	CPUPercent float64 `json:"cpu_percent"` // sobre la capacidad total de la máquina
+	Name       string  `json:"name"`              // unidad de systemd
+	Display    string  `json:"display,omitempty"` // nombre legible (Chrome, laravel_app…)
+	Kind       string  `json:"kind,omitempty"`    // servicio, app, contenedor, sesión u otro
+	CPUPercent float64 `json:"cpu_percent"`       // sobre la capacidad total de la máquina
 	MemBytes   uint64  `json:"mem_bytes"`
 	MemMax     uint64  `json:"mem_max,omitempty"` // 0 = sin límite
 	OOMKills   uint64  `json:"oom_kills"`         // acumulado desde que existe el cgroup
@@ -172,9 +174,19 @@ func (c *Collector) Tick() {
 	elapsedUsec := float64(sys.Time.Sub(c.prevSys.Time).Microseconds())
 	services := make([]ServiceSample, 0, len(raw))
 	for _, s := range raw {
-		ss := ServiceSample{Name: s.Name, MemBytes: s.MemCurrent, MemMax: s.MemMax, OOMKills: s.OOMKills}
-		if p, ok := c.prevSvc[s.Name]; ok && elapsedUsec > 0 && s.CPUUsageUsec >= p.CPUUsageUsec {
-			ss.CPUPercent = 100 * float64(s.CPUUsageUsec-p.CPUUsageUsec) / elapsedUsec / c.numCPU
+		ss := ServiceSample{Name: s.Name, Display: s.Display, Kind: s.Kind, MemBytes: s.MemCurrent, MemMax: s.MemMax, OOMKills: s.OOMKills}
+		if elapsedUsec > 0 {
+			if p, ok := c.prevSvc[s.Name]; ok {
+				if s.CPUUsageUsec >= p.CPUUsageUsec {
+					ss.CPUPercent = 100 * float64(s.CPUUsageUsec-p.CPUUsageUsec) / elapsedUsec / c.numCPU
+				}
+			} else if float64(s.CPUUsageUsec) <= elapsedUsec*c.numCPU {
+				// Unidad nueva: como se recorren todas en cada muestra, se creó
+				// después de la anterior y todo su consumo es de este intervalo.
+				// (Si supera lo posible en el intervalo, es una unidad antigua que
+				// acaba de entrar en la vigilancia, p. ej. al cambiar los slices.)
+				ss.CPUPercent = 100 * float64(s.CPUUsageUsec) / elapsedUsec / c.numCPU
+			}
 		}
 		services = append(services, ss)
 	}
@@ -215,4 +227,38 @@ func (c *Collector) Services() []ServiceSample {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return append([]ServiceSample(nil), c.services...)
+}
+
+// Label devuelve el nombre legible, o el de la unidad si no hay otro.
+func (s ServiceSample) Label() string {
+	if s.Display != "" {
+		return s.Display
+	}
+	return s.Name
+}
+
+// Grouped une las unidades del mismo tipo y nombre legible (p. ej. dos
+// unidades de una misma aplicación), sumando su consumo. El orden se conserva.
+func Grouped(in []ServiceSample) []ServiceSample {
+	idx := map[string]int{}
+	var out []ServiceSample
+	for _, s := range in {
+		key := s.Kind + "\x00" + s.Label()
+		i, ok := idx[key]
+		if !ok {
+			idx[key] = len(out)
+			out = append(out, s)
+			continue
+		}
+		o := &out[i]
+		o.CPUPercent += s.CPUPercent
+		o.MemBytes += s.MemBytes
+		o.OOMKills += s.OOMKills
+		if o.MemMax > 0 && s.MemMax > 0 {
+			o.MemMax += s.MemMax
+		} else {
+			o.MemMax = 0 // si alguna no tiene límite, el conjunto tampoco
+		}
+	}
+	return out
 }

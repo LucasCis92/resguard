@@ -13,6 +13,7 @@ import (
 	"github.com/LucasCis92/resguard/internal/daemon"
 	"github.com/LucasCis92/resguard/internal/events"
 	"github.com/LucasCis92/resguard/internal/ipc"
+	"github.com/LucasCis92/resguard/internal/metrics"
 	"github.com/LucasCis92/resguard/internal/version"
 )
 
@@ -27,8 +28,9 @@ func registerCommands(srv *daemon.Server, col *collector.Collector, store *event
 		Text: func([]string) (string, error) { return status(col, store) }})
 	srv.Register(daemon.Command{Name: "history", Usage: "history [n]", Description: "últimas n muestras (20 por defecto)",
 		Text: func(args []string) (string, error) { return historyCmd(col, args) }})
-	srv.Register(daemon.Command{Name: "services", Usage: "services [cpu|mem] [n]", Description: "servicios que más consumen",
-		Text: func(args []string) (string, error) { return servicesCmd(col, args) }})
+	srv.Register(daemon.Command{Name: "services", Usage: "services [cpu|mem] [apps|servicios|contenedores] [n]",
+		Description: "servicios, aplicaciones y contenedores que más consumen",
+		Text:        func(args []string) (string, error) { return servicesCmd(col, args) }})
 	srv.Register(daemon.Command{Name: "events", Usage: "events [n]", Description: "últimas n incidencias (20 por defecto)",
 		Text: func(args []string) (string, error) { return eventsCmd(store, args) }})
 	srv.Register(daemon.Command{Name: "event", Usage: "event <id>", Description: "detalle de una incidencia",
@@ -103,19 +105,39 @@ func historyCmd(col *collector.Collector, args []string) (string, error) {
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-// servicesCmd: services [cpu|mem] [n] — servicios ordenados por consumo.
+// kindFilters relaciona los filtros de "services" con los tipos de unidad.
+var kindFilters = map[string]string{
+	"apps":         metrics.KindApp,
+	"servicios":    metrics.KindService,
+	"contenedores": metrics.KindContainer,
+	"sesiones":     metrics.KindSession,
+}
+
+// servicesCmd: services [cpu|mem] [apps|servicios|contenedores] [n] — unidades
+// ordenadas por consumo, opcionalmente solo de un tipo. Los argumentos pueden
+// ir en cualquier orden.
 func servicesCmd(col *collector.Collector, args []string) (string, error) {
-	sortBy := "cpu"
-	if len(args) > 0 && (args[0] == "cpu" || args[0] == "mem") {
-		sortBy, args = args[0], args[1:]
+	sortBy, kind, n := "cpu", "", 15
+	for _, a := range args {
+		if a == "cpu" || a == "mem" {
+			sortBy = a
+		} else if k, ok := kindFilters[a]; ok {
+			kind = k
+		} else if v, err := countArg([]string{a}, 0); err == nil {
+			n = v
+		} else {
+			return "", fmt.Errorf("argumento desconocido %q (uso: services [cpu|mem] [apps|servicios|contenedores|sesiones] [n])", a)
+		}
 	}
-	n, err := countArg(args, 15)
-	if err != nil {
-		return "", err
+
+	var svcs []collector.ServiceSample
+	for _, s := range collector.Grouped(col.Services()) {
+		if kind == "" || s.Kind == kind {
+			svcs = append(svcs, s)
+		}
 	}
-	svcs := col.Services()
 	if len(svcs) == 0 {
-		return "", errors.New("no se encontraron servicios (¿es correcto -slices?)")
+		return "", errors.New("no se encontraron unidades de ese tipo (revisa services.slices en la configuración)")
 	}
 	sort.SliceStable(svcs, func(i, j int) bool {
 		if sortBy == "mem" {
@@ -129,16 +151,17 @@ func servicesCmd(col *collector.Collector, args []string) (string, error) {
 
 	var b strings.Builder
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SERVICIO\tCPU%\tMEMORIA\tLÍMITE\tOOM KILLS")
+	fmt.Fprintln(tw, "NOMBRE\tTIPO\tCPU%\tMEMORIA\tLÍMITE\tOOM KILLS")
 	for _, s := range svcs {
 		limit := "-"
 		if s.MemMax > 0 {
 			limit = mib(s.MemMax)
 		}
-		fmt.Fprintf(tw, "%s\t%.1f\t%s\t%s\t%d\n", s.Name, s.CPUPercent, mib(s.MemBytes), limit, s.OOMKills)
+		fmt.Fprintf(tw, "%s\t%s\t%.1f\t%s\t%s\t%d\n", s.Label(), s.Kind, s.CPUPercent, mib(s.MemBytes), limit, s.OOMKills)
 	}
 	tw.Flush()
-	return strings.TrimRight(b.String(), "\n"), nil
+	b.WriteString("CPU% es sobre la capacidad total de la máquina.")
+	return b.String(), nil
 }
 
 // eventsCmd: events [n] — últimas n incidencias (por defecto 20).
@@ -188,14 +211,14 @@ func eventCmd(store *events.Store, args []string) (string, error) {
 			if len(c.TopCPU) > 0 {
 				b.WriteString("Más CPU:  ")
 				for _, s := range c.TopCPU {
-					fmt.Fprintf(&b, " %s (%.1f%%)", s.Name, s.CPUPercent)
+					fmt.Fprintf(&b, " %s (%.1f%%)", s.Label(), s.CPUPercent)
 				}
 				b.WriteString("\n")
 			}
 			if len(c.TopMemory) > 0 {
 				b.WriteString("Más memoria:")
 				for _, s := range c.TopMemory {
-					fmt.Fprintf(&b, " %s (%s)", s.Name, mib(s.MemBytes))
+					fmt.Fprintf(&b, " %s (%s)", s.Label(), mib(s.MemBytes))
 				}
 				b.WriteString("\n")
 			}

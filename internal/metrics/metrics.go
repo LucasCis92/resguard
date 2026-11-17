@@ -18,8 +18,11 @@ import (
 
 // Reader lee métricas a partir de una raíz del sistema de ficheros.
 // En producción la raíz es "/"; en los tests apunta a testdata.
+// No es seguro para uso concurrente.
 type Reader struct {
 	Root string
+
+	containerNames map[string]string // caché id → nombre de contenedor
 }
 
 // NewReader devuelve un lector sobre el sistema real.

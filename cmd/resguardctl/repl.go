@@ -42,7 +42,8 @@ func repl(s *session) {
 	comp := &completer{
 		commands: s.commandNames,
 		args: map[string][]string{
-			"services": {"cpu", "mem"},
+			"services": {"cpu", "mem", "apps", "servicios", "contenedores", "sesiones"},
+			"logs":     {"avisos", "seguir"},
 		},
 	}
 	t.AutoCompleteCallback = func(line string, pos int, key rune) (string, int, bool) {
@@ -78,6 +79,15 @@ func repl(s *session) {
 			if err := watch(s, fields[1:], true); err != nil {
 				fmt.Fprintln(t, "error:", err)
 			}
+		case "logs":
+			// journalctl necesita la terminal en modo normal, no en modo raw.
+			term.Restore(in, oldState)
+			if err := logs(s, fields[1:]); err != nil {
+				fmt.Fprintln(os.Stderr, "error:", err)
+			}
+			if _, err := term.MakeRaw(in); err != nil {
+				return
+			}
 		default:
 			s.run(fields, t)
 		}
@@ -101,6 +111,10 @@ func plainREPL(s *session) {
 			return
 		case "watch":
 			fmt.Println("error: watch necesita una terminal interactiva")
+		case "logs":
+			if err := logs(s, fields[1:]); err != nil {
+				fmt.Println("error:", err)
+			}
 		default:
 			s.run(fields, os.Stdout)
 		}

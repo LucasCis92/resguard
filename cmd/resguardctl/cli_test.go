@@ -197,3 +197,26 @@ func TestRenderError(t *testing.T) {
 		t.Errorf("fotograma de error:\n%s", frame)
 	}
 }
+
+func TestLogsArgs(t *testing.T) {
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{nil, "--unit resguard.service --lines 50 --no-hostname --output short --no-pager"},
+		{[]string{"200"}, "--unit resguard.service --lines 200 --no-hostname --output short --no-pager"},
+		{[]string{"avisos", "seguir"}, "--unit resguard.service --lines 50 --no-hostname --output short --priority warning --follow"},
+		{[]string{"seguir", "10"}, "--unit resguard.service --lines 10 --no-hostname --output short --follow"},
+	}
+	for _, tt := range tests {
+		got, err := logsArgs(tt.args)
+		if err != nil || strings.Join(got, " ") != tt.want {
+			t.Errorf("logsArgs(%v) = %v, %v; quiero %s", tt.args, got, err, tt.want)
+		}
+	}
+	for _, bad := range [][]string{{"todo"}, {"-5"}, {"0"}, {"; rm -rf /"}} {
+		if _, err := logsArgs(bad); err == nil {
+			t.Errorf("logsArgs(%v) debería fallar", bad)
+		}
+	}
+}

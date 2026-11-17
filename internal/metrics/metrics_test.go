@@ -4,6 +4,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -128,5 +129,78 @@ func TestReadServices(t *testing.T) {
 	g := got["getty@tty1.service"]
 	if g.MemMax != 8192 || g.Cgroup != "system.slice/system-getty.slice/getty@tty1.service" {
 		t.Errorf("getty = %+v", g)
+	}
+}
+
+func TestReadServicesUserSessionsAndContainers(t *testing.T) {
+	root := t.TempDir()
+	usr := "sys/fs/cgroup/user.slice/user-1000.slice/"
+	mgr := usr + "user@1000.service/"
+	id := "74a85415a2bd981099746ca31e2caea85fb944f46034307c0510e88129a533b9"
+	other := "95ebfa4a993d6f35dda48b16cb925e7616756590e9d6030a31d9cc1adc64890b"
+	files := map[string]string{
+		"var/lib/docker/containers/" + id + "/config.v2.json": `{"ID":"x","Name":"/laravel_app","Config":{}}`,
+	}
+	for _, unit := range []string{
+		usr + "session-6.scope",
+		mgr + "init.scope",
+		mgr + "app.slice/app-com.google.Chrome-5016.scope",
+		mgr + `app.slice/app-gnome-google\x2dchrome-5016.scope`,
+		mgr + "app.slice/app-gnome-code-6255.scope",
+		mgr + "app.slice/app-org.gnome.Terminal.slice/vte-spawn-3f2a9c1e.scope",
+		mgr + "session.slice/org.gnome.Shell@wayland.service",
+		"sys/fs/cgroup/system.slice/docker-" + id + ".scope",
+		"sys/fs/cgroup/system.slice/docker-" + other + ".scope",
+		"sys/fs/cgroup/system.slice/nginx.service",
+	} {
+		files[unit+"/cpu.stat"] = "usage_usec 100\n"
+	}
+	writeFiles(t, root, files)
+
+	svcs, err := (&Reader{Root: root}).ReadServices([]string{"system.slice", "user.slice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type kd struct{ kind, display string }
+	got := map[string]kd{}
+	for _, s := range svcs {
+		got[s.Name] = kd{s.Kind, s.Display}
+	}
+	want := map[string]kd{
+		"session-6.scope":                       {KindSession, "sesión 6"},
+		"init.scope":                            {KindOther, "init.scope"},
+		"app-com.google.Chrome-5016.scope":      {KindApp, "Chrome"},
+		`app-gnome-google\x2dchrome-5016.scope`: {KindApp, "Chrome"}, // misma apertura (5016) que la anterior
+		"app-gnome-code-6255.scope":             {KindApp, "code"},
+		"vte-spawn-3f2a9c1e.scope":              {KindApp, "Terminal"},
+		"org.gnome.Shell@wayland.service":       {KindService, "org.gnome.Shell@wayland.service"},
+		"docker-" + id + ".scope":               {KindContainer, "laravel_app"},
+		"docker-" + other + ".scope":            {KindContainer, "contenedor 95ebfa4a993d"},
+		"nginx.service":                         {KindService, "nginx.service"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("unidades:\n got  %v\n want %v", got, want)
+	}
+	if _, ok := got["user@1000.service"]; ok {
+		t.Error("user@1000.service debe recorrerse, no contarse como una unidad")
+	}
+}
+
+func TestAppName(t *testing.T) {
+	for unit, want := range map[string]string{
+		"app-com.google.Chrome-5016.scope":                                "Chrome",
+		"app-gnome-code-6255.scope":                                       "code",
+		"app-code-6255.scope":                                             "code",
+		`app-gnome-update\x2dnotifier-5621.scope`:                         "update-notifier",
+		"app-gnome-org.gnome.SettingsDaemon.DiskUtilityNotify-4266.scope": "DiskUtilityNotify",
+		"app-flatpak-com.spotify.Client-1234.scope":                       "Client",
+		"app-gnome-firefox-a1b2c3.scope":                                  "firefox",
+		`app-gnome-xdg\x2duser\x2ddirs@autostart.service`:                 "xdg-user-dirs",
+		"app-org.gnome.Terminal.slice":                                    "Terminal",
+		"app-.scope":                                                      "app-.scope",
+	} {
+		if got := appName(unit); got != want {
+			t.Errorf("appName(%q) = %q, quiero %q", unit, got, want)
+		}
 	}
 }

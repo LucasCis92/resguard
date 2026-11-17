@@ -5,6 +5,7 @@
 //	resguardctl            # modo interactivo
 //	resguardctl status     # orden única
 //	resguardctl watch      # vista en vivo
+//	resguardctl logs       # logs del servicio
 package main
 
 import (
@@ -40,6 +41,11 @@ func main() {
 	switch args[0] {
 	case "watch":
 		if err := watch(s, args[1:], false); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+	case "logs":
+		if err := logs(s, args[1:]); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
