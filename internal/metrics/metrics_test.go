@@ -1,10 +1,12 @@
 package metrics
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -201,6 +203,83 @@ func TestAppName(t *testing.T) {
 	} {
 		if got := appName(unit); got != want {
 			t.Errorf("appName(%q) = %q, quiero %q", unit, got, want)
+		}
+	}
+}
+
+func TestReadProcesses(t *testing.T) {
+	root := t.TempDir()
+	app := "sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/app-com.google.Chrome-5016.scope"
+	writeFiles(t, root, map[string]string{
+		app + "/cgroup.procs":       "100\n200\n",
+		app + "/child/cgroup.procs": "300\n400\n",
+		// Proceso con espacios y paréntesis en el nombre: se parsea desde el último ")".
+		"proc/100/stat":    "100 (chrome (x) y) S 1 100 100 0 -1 4194304 1 0 0 0 250 50 0 0 20 0 31 0 1 1 1\n",
+		"proc/100/comm":    "chrome\n",
+		"proc/100/statm":   "1000 256 10 1 0 100 0\n",
+		"proc/100/status":  "Name:\tchrome\nUid:\t0\t0\t0\t0\n",
+		"proc/100/cmdline": "/opt/google/chrome/chrome\x00--password=secreto\x00https://meet.example/abc?token=xyz\x00",
+		"proc/200/stat":    "200 (chrome) S 100 100 100 0 -1 0 0 0 0 0 1000 200 0 0 20 0 12 0 1 1 1\n",
+		"proc/200/comm":    "chrome\n",
+		"proc/200/statm":   "2000 512 10 1 0 100 0\n",
+		"proc/200/status":  "Uid:\t0\t0\t0\t0\n",
+		"proc/200/cmdline": "/opt/google/chrome/chrome\x00--type=utility\x00--utility-sub-type=audio.mojom.AudioService\x00--lang=es\x00",
+		// Formato real de Chromium: todo en un bloque separado por espacios.
+		"proc/300/stat":    "300 (chrome) S 100 100 100 0 -1 0 0 0 0 0 10 5 0 0 20 0 8 0 1 1 1\n",
+		"proc/300/comm":    "chrome\n",
+		"proc/300/statm":   "100 50 10 1 0 100 0\n",
+		"proc/300/status":  "Uid:\t0\t0\t0\t0\n",
+		"proc/300/cmdline": "/opt/google/chrome/chrome --type=renderer --crashpad-handler-pid=12 --lang=es\x00",
+		// El 400 terminó entre la lectura de cgroup.procs y la de /proc: se omite.
+	})
+
+	procs, err := (&Reader{Root: root}).ReadProcesses(strings.TrimPrefix(app, "sys/fs/cgroup/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(procs) != 3 {
+		t.Fatalf("procesos = %+v", procs)
+	}
+	if r := procs[2]; r.PID != 300 || r.Role != "renderer" {
+		t.Errorf("proceso 300 (línea de órdenes separada por espacios) = %+v", r)
+	}
+	page := uint64(os.Getpagesize())
+	p := procs[0]
+	if p.PID != 100 || p.CPUTicks != 300 || p.Threads != 31 || p.RSSBytes != 256*page || p.Name != "chrome" || p.User != "root" || p.Role != "" {
+		t.Errorf("proceso 100 = %+v", p)
+	}
+	if q := procs[1]; q.CPUTicks != 1200 || q.Role != "utility: audio" {
+		t.Errorf("proceso 200 = %+v", q)
+	}
+	for _, pr := range procs {
+		dump := fmt.Sprintf("%+v", pr)
+		for _, secret := range []string{"secreto", "token", "meet.example", "password", "/opt/google"} {
+			if strings.Contains(dump, secret) {
+				t.Errorf("la información del proceso no debe incluir argumentos (%q): %s", secret, dump)
+			}
+		}
+	}
+}
+
+func TestReadProcessesRejectsEscapes(t *testing.T) {
+	if _, err := (&Reader{Root: t.TempDir()}).ReadProcesses("../../etc"); err == nil {
+		t.Error("una ruta que sale de la jerarquía de cgroups debe rechazarse")
+	}
+}
+
+func TestProcessRole(t *testing.T) {
+	for args, want := range map[string]string{
+		"chrome --type=renderer --lang=es": "renderer",
+		"chrome --type=gpu-process":        "gpu-process",
+		"chrome --type=utility --utility-sub-type=video_capture.mojom.VideoCaptureService": "utility: video_capture",
+		"chrome --type=utility --utility-sub-type=network.mojom.NetworkService":            "utility: network",
+		"chrome --type=utility":          "utility",
+		"code --type=zygote":             "zygote",
+		"chrome https://meet.example":    "",
+		"x --type=renderer;rm -rf $HOME": "rendererrm", // solo letras, números, - _ .
+	} {
+		if got := processRole(strings.Fields(args)); got != want {
+			t.Errorf("processRole(%q) = %q, quiero %q", args, got, want)
 		}
 	}
 }

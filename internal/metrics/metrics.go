@@ -23,6 +23,7 @@ type Reader struct {
 	Root string
 
 	containerNames map[string]string // caché id → nombre de contenedor
+	userNames      map[string]string // caché uid → nombre de usuario
 }
 
 // NewReader devuelve un lector sobre el sistema real.

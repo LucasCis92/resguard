@@ -3,9 +3,11 @@ package main
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 
@@ -38,6 +40,44 @@ func registerCommands(srv *daemon.Server, col *collector.Collector, store *event
 
 	srv.Register(daemon.Command{Name: "config", Description: "configuración en uso y de dónde se cargó",
 		Text: func([]string) (string, error) { return cur.get().describe(), nil }})
+
+	// Procesos de unas unidades, para la vista de procesos de "watch". Solo
+	// se aceptan nombres de unidades que el recolector conoce: la ruta del
+	// cgroup nunca la decide el cliente.
+	procReader := metrics.NewReader() // propio: el del recolector no es concurrente
+	var procMu sync.Mutex
+	srv.Register(daemon.Command{Name: "processes", Hidden: true,
+		Data: func(args []string) (any, error) {
+			if len(args) == 0 || len(args) > 20 {
+				return nil, errors.New("uso: processes <unidad>...")
+			}
+			want := map[string]bool{}
+			for _, a := range args {
+				want[a] = true
+			}
+			list := ipc.ProcessList{Time: time.Now(), NumCPU: runtime.NumCPU()}
+			procMu.Lock()
+			defer procMu.Unlock()
+			for _, svc := range col.Services() {
+				if !want[svc.Name] || svc.Cgroup == "" {
+					continue
+				}
+				procs, err := procReader.ReadProcesses(svc.Cgroup)
+				if err != nil {
+					continue
+				}
+				list.Units = append(list.Units, svc.Name)
+				list.Processes = append(list.Processes, procs...)
+				if len(list.Processes) >= metrics.MaxProcesses {
+					list.Processes = list.Processes[:metrics.MaxProcesses]
+					break
+				}
+			}
+			if len(list.Units) == 0 {
+				return nil, errors.New("la unidad ya no está en ejecución")
+			}
+			return list, nil
+		}})
 
 	// Estado completo para la vista "watch" de la CLI.
 	srv.Register(daemon.Command{Name: "snapshot", Hidden: true,

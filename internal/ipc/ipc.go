@@ -12,6 +12,7 @@ import (
 
 	"github.com/LucasCis92/resguard/internal/collector"
 	"github.com/LucasCis92/resguard/internal/events"
+	"github.com/LucasCis92/resguard/internal/metrics"
 )
 
 // DefaultSocketPath es la ruta por defecto del socket del demonio.
@@ -47,6 +48,16 @@ type CommandInfo struct {
 	Name        string `json:"name"`
 	Usage       string `json:"usage,omitempty"`
 	Description string `json:"description,omitempty"`
+}
+
+// ProcessList son los procesos de una o varias unidades (orden "processes").
+// El uso de CPU de cada proceso lo calcula la CLI comparando CPUTicks entre
+// dos respuestas.
+type ProcessList struct {
+	Time      time.Time         `json:"time"`
+	NumCPU    int               `json:"num_cpu"`
+	Units     []string          `json:"units"` // unidades encontradas
+	Processes []metrics.Process `json:"processes"`
 }
 
 // Snapshot es el estado completo que usa la vista "watch" (orden "snapshot").

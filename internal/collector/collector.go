@@ -29,13 +29,16 @@ type Sample struct {
 
 // ServiceSample es el uso de recursos de un servicio en una muestra.
 type ServiceSample struct {
-	Name       string  `json:"name"`              // unidad de systemd
-	Display    string  `json:"display,omitempty"` // nombre legible (Chrome, laravel_app…)
-	Kind       string  `json:"kind,omitempty"`    // servicio, app, contenedor, sesión u otro
-	CPUPercent float64 `json:"cpu_percent"`       // sobre la capacidad total de la máquina
-	MemBytes   uint64  `json:"mem_bytes"`
-	MemMax     uint64  `json:"mem_max,omitempty"` // 0 = sin límite
-	OOMKills   uint64  `json:"oom_kills"`         // acumulado desde que existe el cgroup
+	Name    string `json:"name"`              // unidad de systemd
+	Display string `json:"display,omitempty"` // nombre legible (Chrome, laravel_app…)
+	Kind    string `json:"kind,omitempty"`    // servicio, app, contenedor, sesión u otro
+	Cgroup  string `json:"-"`                 // ruta del cgroup; no se envía a la CLI
+	// Units son las unidades que forman el grupo, en los resultados de Grouped.
+	Units      []string `json:"units,omitempty"`
+	CPUPercent float64  `json:"cpu_percent"` // sobre la capacidad total de la máquina
+	MemBytes   uint64   `json:"mem_bytes"`
+	MemMax     uint64   `json:"mem_max,omitempty"` // 0 = sin límite
+	OOMKills   uint64   `json:"oom_kills"`         // acumulado desde que existe el cgroup
 }
 
 // Observer recibe cada muestra nueva. Se llama de forma síncrona desde el
@@ -174,7 +177,7 @@ func (c *Collector) Tick() {
 	elapsedUsec := float64(sys.Time.Sub(c.prevSys.Time).Microseconds())
 	services := make([]ServiceSample, 0, len(raw))
 	for _, s := range raw {
-		ss := ServiceSample{Name: s.Name, Display: s.Display, Kind: s.Kind, MemBytes: s.MemCurrent, MemMax: s.MemMax, OOMKills: s.OOMKills}
+		ss := ServiceSample{Name: s.Name, Display: s.Display, Kind: s.Kind, Cgroup: s.Cgroup, MemBytes: s.MemCurrent, MemMax: s.MemMax, OOMKills: s.OOMKills}
 		if elapsedUsec > 0 {
 			if p, ok := c.prevSvc[s.Name]; ok {
 				if s.CPUUsageUsec >= p.CPUUsageUsec {
@@ -247,10 +250,12 @@ func Grouped(in []ServiceSample) []ServiceSample {
 		i, ok := idx[key]
 		if !ok {
 			idx[key] = len(out)
+			s.Units = []string{s.Name}
 			out = append(out, s)
 			continue
 		}
 		o := &out[i]
+		o.Units = append(o.Units, s.Name)
 		o.CPUPercent += s.CPUPercent
 		o.MemBytes += s.MemBytes
 		o.OOMKills += s.OOMKills

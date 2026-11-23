@@ -92,7 +92,7 @@ resguardctl watch      # vista en vivo
 | Orden | Qué muestra |
 |-------|-------------|
 | `status` | CPU, memoria, swap, carga, PSI y número de incidencias en la última hora |
-| `watch [segundos]` | vista en vivo a pantalla completa: barras de uso, servicios que más consumen e incidencias recientes. `c`/`m` ordenan por CPU o memoria, `q` sale |
+| `watch [segundos]` | vista en vivo a pantalla completa: barras de uso, lo que más consume e incidencias recientes. Permite filtrar y ver los procesos de cada aplicación (ver abajo) |
 | `history [n]` | las últimas *n* muestras (20 por defecto) |
 | `services [cpu\|mem] [apps\|servicios\|contenedores\|sesiones] [n]` | lo que más consume, con su tipo, límite de memoria y OOM kills. Por ejemplo, `services apps mem` muestra las aplicaciones que más memoria usan |
 | `events [n]` | las últimas *n* incidencias |
@@ -110,7 +110,31 @@ En el modo interactivo:
 - **Ctrl+D**, **Ctrl+C** o `exit`: salir.
 - Si el demonio se reinicia, la CLI se reconecta sola.
 
-Los colores se desactivan con la variable de entorno `NO_COLOR=1`.
+#### La vista `watch`
+
+`resguardctl watch` se actualiza cada 2 segundos (o los indicados: `watch 1`). Tiene dos pantallas:
+
+**Lista de servicios, aplicaciones y contenedores**
+
+| Tecla | Acción |
+|-------|--------|
+| `↑` `↓` (o `k` `j`), `RePág` `AvPág`, `Inicio` `Fin` | elegir una fila |
+| `Enter` o `→` | ver los procesos de la fila elegida |
+| `a` / `s` / `d` / `t` | mostrar solo apps, servicios, contenedores (Docker) o todo |
+| `c` / `m` | ordenar por CPU o por memoria |
+| `q` o `Esc` | salir |
+
+**Procesos de una aplicación o servicio**: PID, usuario, CPU, memoria, hilos y qué es cada
+proceso. En Chrome y en aplicaciones Electron (como VS Code) se indica su papel: `renderer` (una
+pestaña o extensión), `gpu-process`, `utility: audio`, `utility: video_capture` (la cámara),
+`utility: network`… Así se ve, por ejemplo, si en una videollamada el consumo viene del video, de la
+GPU o de otra pestaña. `Esc`, `←` o Retroceso vuelven a la lista; `c`/`m` ordenan; `q` sale.
+
+Por privacidad, nunca se muestra la línea de órdenes completa de un proceso (podría contener
+contraseñas o tokens): solo su nombre y, en Chromium/Electron, su papel.
+
+Los colores se desactivan con la variable de entorno `NO_COLOR=1`; la fila elegida se marca
+también con `›`.
 
 ### Incidencias que se registran
 
