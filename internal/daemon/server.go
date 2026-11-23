@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/LucasCis92/resguard/internal/ipc"
 )
@@ -61,12 +62,29 @@ func (s *Server) Handle(name string, h Handler) { s.Register(Command{Name: name,
 
 // Run escucha hasta que ctx se cancela.
 func (s *Server) Run(ctx context.Context) error {
+	// Si otro demonio ya atiende en este socket (p. ej. el servicio instalado),
+	// no se le quita: al cerrar, esta copia borraría el socket y el servicio
+	// quedaría funcionando pero inaccesible para la CLI.
+	if c, err := net.DialTimeout("unix", s.socketPath, time.Second); err == nil {
+		c.Close()
+		return fmt.Errorf("ya hay un resguardd funcionando en %s (probablemente el servicio). "+
+			"No hace falta ejecutarlo a mano: consúltalo con resguardctl", s.socketPath)
+	}
+
 	// Elimina un socket huérfano de una ejecución anterior.
 	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if errors.Is(err, fs.ErrPermission) {
+			return fmt.Errorf("sin permiso para usar %s, que pertenece al servicio instalado. "+
+				"Para consultarlo usa resguardctl; para probar un demonio propio usa make dev u otro -socket", s.socketPath)
+		}
 		return fmt.Errorf("eliminando socket previo: %w", err)
 	}
 
 	ln, err := net.Listen("unix", s.socketPath)
+	if errors.Is(err, fs.ErrPermission) {
+		return fmt.Errorf("sin permiso para crear %s: ese directorio es del servicio instalado. "+
+			"Para consultarlo usa resguardctl; para probar un demonio propio usa make dev u otro -socket", s.socketPath)
+	}
 	if err != nil {
 		return fmt.Errorf("escuchando en %s: %w", s.socketPath, err)
 	}

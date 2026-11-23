@@ -153,3 +153,27 @@ func TestServerUnknownGroup(t *testing.T) {
 		t.Fatal("un grupo inexistente debería impedir arrancar")
 	}
 }
+
+// Una segunda copia no debe quitarle el socket a un demonio que funciona:
+// al cerrarse lo borraría y el primero quedaría inaccesible.
+func TestServerRefusesSecondInstance(t *testing.T) {
+	c, sock := startServer(t)
+
+	second := NewServer(sock, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	err := second.Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "ya hay un resguardd") {
+		t.Fatalf("la segunda copia debería negarse a arrancar: %v", err)
+	}
+
+	// El primero sigue accesible por el mismo socket.
+	if resp, err := c.Call("echo", "sigo"); err != nil || resp.Output != "sigo" {
+		t.Fatalf("el primer demonio dejó de responder: %+v, %v", resp, err)
+	}
+	c2, err := ipc.Dial(sock)
+	if err != nil {
+		t.Fatalf("el socket del primer demonio desapareció: %v", err)
+	}
+	c2.Close()
+}
