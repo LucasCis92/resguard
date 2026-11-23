@@ -35,7 +35,10 @@ jobs:
           go-version-file: ${{ matrix.go == 'go.mod' && 'go.mod' || '' }}
           go-version: ${{ matrix.go == 'stable' && 'stable' || '' }}
 
+      # gofmt's alignment rules change between Go versions, so formatting is
+      # checked with the latest stable Go only; tests run on both versions.
       - name: Formatting (gofmt)
+        if: matrix.go == 'stable'
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
