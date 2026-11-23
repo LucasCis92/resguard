@@ -53,18 +53,26 @@ Fuentes de información:
 
 ## Instalación
 
-**Ubuntu y Debian.** Descarga el `.deb` de tu arquitectura desde la
-[página de releases](https://github.com/LucasCis92/resguard/releases) e instálalo:
+**Ubuntu y Debian.** Descarga el paquete e instálalo:
 
 ```bash
+wget https://github.com/LucasCis92/resguard/releases/download/v0.1.0/resguard_0.1.0-1_amd64.deb
 sudo apt install ./resguard_0.1.0-1_amd64.deb
 ```
 
-**Fedora, RHEL y derivadas:**
+`apt` instala un archivo que ya está en tu equipo (eso indica el `./`), por eso primero se descarga
+el paquete. También puedes descargarlo con el navegador desde la
+[página de releases](https://github.com/LucasCis92/resguard/releases), en **Assets**. En equipos
+ARM (por ejemplo una Raspberry Pi) usa `arm64` en vez de `amd64`; `dpkg --print-architecture` te
+dice cuál necesitas.
+
+**Fedora, RHEL y derivadas.** `dnf` puede instalar directamente desde la dirección:
 
 ```bash
-sudo dnf install ./resguard-0.1.0-1.x86_64.rpm
+sudo dnf install https://github.com/LucasCis92/resguard/releases/download/v0.1.0/resguard-0.1.0-1.x86_64.rpm
 ```
+
+En equipos ARM usa `aarch64` en vez de `x86_64`.
 
 El paquete instala los programas, el servicio de systemd, la configuración en
 `/etc/resguard/config.yaml` y las páginas de manual (`man resguardctl`, `man resguardd`, en español
@@ -97,6 +105,7 @@ gh attestation verify resguard_0.1.0-1_amd64.deb --repo LucasCis92/resguard
 O, como mínimo, comprueba su suma SHA-256 con el archivo `SHA256SUMS` de la release:
 
 ```bash
+wget https://github.com/LucasCis92/resguard/releases/download/v0.1.0/SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 
@@ -343,7 +352,8 @@ original.
 
 ## Publicar una versión
 
-1. Añade una entrada al principio de `deploy/package/changelog.yml` con la versión nueva.
+1. Añade una entrada al principio de `deploy/package/changelog.yml` con la versión nueva, y
+   actualiza la versión en los comandos de instalación de `README.md` y `README.es.md`.
 2. Comprueba que los paquetes se generan y pasan `lintian`: `make package` (los deja en `dist/`).
 3. Haz commit, crea la etiqueta y súbela:
 

@@ -52,18 +52,26 @@ Data sources:
 
 ## Installation
 
-**Ubuntu and Debian.** Download the `.deb` for your architecture from the
-[releases page](https://github.com/LucasCis92/resguard/releases) and install it:
+**Ubuntu and Debian.** Download the package and install it:
 
 ```bash
+wget https://github.com/LucasCis92/resguard/releases/download/v0.1.0/resguard_0.1.0-1_amd64.deb
 sudo apt install ./resguard_0.1.0-1_amd64.deb
 ```
 
-**Fedora, RHEL and derivatives:**
+`apt` installs a file that is already on your machine (that is what the `./` means), so the package
+is downloaded first. You can also download it with your browser from the
+[releases page](https://github.com/LucasCis92/resguard/releases), under **Assets**. On ARM machines
+(for example a Raspberry Pi) use `arm64` instead of `amd64`; `dpkg --print-architecture` tells you
+which one you need.
+
+**Fedora, RHEL and derivatives.** `dnf` can install straight from the address:
 
 ```bash
-sudo dnf install ./resguard-0.1.0-1.x86_64.rpm
+sudo dnf install https://github.com/LucasCis92/resguard/releases/download/v0.1.0/resguard-0.1.0-1.x86_64.rpm
 ```
+
+On ARM machines use `aarch64` instead of `x86_64`.
 
 The package installs the programs, the systemd service, the configuration in
 `/etc/resguard/config.yaml` and the man pages (`man resguardctl`, `man resguardd`); it creates the
@@ -96,6 +104,7 @@ gh attestation verify resguard_0.1.0-1_amd64.deb --repo LucasCis92/resguard
 Or, at least, check its SHA-256 sum against the release's `SHA256SUMS` file:
 
 ```bash
+wget https://github.com/LucasCis92/resguard/releases/download/v0.1.0/SHA256SUMS
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 
@@ -339,7 +348,8 @@ source.
 
 ## Releasing
 
-1. Add an entry at the top of `deploy/package/changelog.yml` for the new version.
+1. Add an entry at the top of `deploy/package/changelog.yml` for the new version, and update the
+   version in the installation commands of `README.md` and `README.es.md`.
 2. Check that the packages build and pass `lintian`: `make package` (they end up in `dist/`).
 3. Commit, create the tag and push it:
 
