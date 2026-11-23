@@ -1,0 +1,67 @@
+name: Release
+
+# Se ejecuta al subir una etiqueta de versión:
+#   git tag v0.1.0 && git push origin v0.1.0
+# Compila, empaqueta (.deb, .rpm, .tar.gz) y crea un BORRADOR de release en
+# GitHub con atestaciones de procedencia. Revisa el borrador y publícalo a mano.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    # Con un "environment" se puede exigir aprobación manual antes de que este
+    # trabajo obtenga permisos de escritura: Settings → Environments → release
+    # → Required reviewers.
+    environment: release
+    permissions:
+      contents: write # crear el borrador de la release y subir los paquetes
+      id-token: write # firmar las atestaciones con la identidad del workflow
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # GoReleaser necesita el historial para el changelog
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false # sin caché en releases: todo se compila desde cero
+
+      - name: Comprobar que la etiqueta coincide con el changelog del paquete
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          first=$(grep -m1 -oP '^- semver: \K\S+' deploy/package/changelog.yml)
+          if [ "$tag" != "$first" ]; then
+            echo "La etiqueta es v$tag pero la última entrada de deploy/package/changelog.yml es $first."
+            echo "Añade una entrada para $tag antes de publicar."
+            exit 1
+          fi
+
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.20.0
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Atestación de procedencia: permite verificar que cada paquete se generó
+      # en este repositorio, con este workflow, a partir de esta etiqueta:
+      #   gh attestation verify <paquete> --repo LucasCis92/resguard
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
+            dist/SHA256SUMS

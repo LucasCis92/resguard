@@ -40,10 +40,11 @@ Fuentes de información del sistema:
 
 ## Requisitos
 
-- Linux con **cgroups v2** (unified hierarchy) y **systemd**.
+- Linux con **cgroups v2** (unified hierarchy) y **systemd**: Ubuntu ≥ 21.10, Debian ≥ 11,
+  Fedora ≥ 31 y la mayoría de distribuciones actuales.
 - Kernel ≥ 4.20 para PSI.
-- Go ≥ 1.22 para compilar.
-- Permisos de root (o los privilegios de D-Bus necesarios) para modificar recursos de servicios.
+- Arquitectura amd64 o arm64.
+- Para compilar desde el código: Go ≥ 1.22.
 
 ## Estructura
 
@@ -57,8 +58,11 @@ internal/collector/ muestreo periódico e historial en memoria
 internal/events/   detección de picos y OOM kills, y registro de incidencias
 internal/units/    vigilancia de caídas de servicios por D-Bus de systemd
 internal/version/  versión inyectada al compilar
+internal/config/   archivo de configuración
 deploy/systemd/    unidad de systemd
 deploy/sysusers.d/ grupo "resguard" para usar la CLI sin root
+deploy/man/        páginas de manual
+deploy/package/    scripts y metadatos de los paquetes .deb y .rpm
 ```
 
 ## Compilación
@@ -70,14 +74,65 @@ make test vet   # pruebas y análisis estático
 
 ## Uso
 
-### Instalación como servicio
+### Instalación
+
+**Ubuntu y Debian.** Descarga el `.deb` de tu arquitectura desde la
+[página de releases](https://github.com/LucasCis92/resguard/releases) e instálalo:
+
+```bash
+sudo apt install ./resguard_0.1.0-1_amd64.deb
+```
+
+**Fedora, RHEL y derivadas:**
+
+```bash
+sudo dnf install ./resguard-0.1.0-1.x86_64.rpm
+```
+
+El paquete instala los programas, el servicio de systemd, la configuración en
+`/etc/resguard/config.yaml` y las páginas de manual (`man resguardctl`, `man resguardd`); crea el
+grupo `resguard` y deja el servicio en marcha y activado al arrancar. Para usar la CLI sin `sudo`:
+
+```bash
+sudo usermod -aG resguard "$USER"
+```
+
+y vuelve a iniciar sesión.
+
+| Para… | Ubuntu / Debian | Fedora |
+|-------|-----------------|--------|
+| actualizar | `sudo apt install ./resguard_<nueva>_amd64.deb` | `sudo dnf install ./resguard-<nueva>.x86_64.rpm` |
+| desinstalar conservando configuración e incidencias | `sudo apt remove resguard` | `sudo dnf remove resguard` |
+| desinstalar y borrar todo | `sudo apt purge resguard` | — |
+
+Las actualizaciones nunca sobrescriben tu `/etc/resguard/config.yaml`: si la versión nueva trae
+cambios en el archivo de ejemplo, `apt` te pregunta qué hacer.
+
+**Verificar el paquete antes de instalarlo** (recomendado). Cada release incluye una atestación
+firmada por GitHub que demuestra que el paquete se generó en este repositorio, a partir de su
+código y sin modificaciones posteriores:
+
+```bash
+gh attestation verify resguard_0.1.0-1_amd64.deb --repo LucasCis92/resguard
+```
+
+O, como mínimo, comprueba su suma SHA-256 con el archivo `SHA256SUMS` de la release:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+**Desde el código** (requiere Go):
 
 ```bash
 make build
-sudo make install                     # binarios, unidad de systemd y grupo "resguard"
+sudo make install
 sudo systemctl enable --now resguard
-sudo usermod -aG resguard "$USER"     # opcional: usar la CLI sin sudo (requiere volver a iniciar sesión)
 ```
+
+`make install` usa `/usr/local`; `sudo make uninstall` lo revierte. Si pasas de esta instalación
+al paquete, ejecuta antes `sudo make uninstall`: si no, quedarían dos copias y la de
+`/usr/local/bin` tendría prioridad.
 
 Para ver los logs y diagnosticar problemas, consulta [Logs y diagnóstico](#logs-y-diagnóstico).
 
@@ -275,6 +330,20 @@ systemctl --user stop rg-crash rg-oomchild; systemctl --user reset-failed
 
 `stress-ng` (`apt install stress-ng`) es útil para generar presión de memoria y E/S más realista.
 
+## Publicar una versión
+
+1. Añade una entrada al principio de `deploy/package/changelog.yml` con la versión nueva.
+2. Comprueba que los paquetes se generan y pasan `lintian`: `make package` (los deja en `dist/`).
+3. Haz commit, crea la etiqueta y súbela:
+
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+
+4. GitHub Actions compila, empaqueta y crea un **borrador** de release con los paquetes, las sumas
+   SHA-256 y las atestaciones. Revísalo y publícalo desde la página de releases.
+
 ## Licencia
 
-Pendiente de definir.
+[MIT](LICENSE).

@@ -1,0 +1,23 @@
+#!/bin/sh
+# postrm del paquete .deb (patrón de dh_installsystemd).
+#   remove: se conservan la configuración y el registro de incidencias.
+#   purge:  se borra todo.
+set -e
+
+if [ "$1" = remove ] && [ -d /run/systemd/system ]; then
+	systemctl --system daemon-reload >/dev/null || true
+fi
+
+if [ "$1" = "remove" ]; then
+	if [ -x "/usr/bin/deb-systemd-helper" ]; then
+		deb-systemd-helper mask 'resguard.service' >/dev/null || true
+	fi
+fi
+
+if [ "$1" = "purge" ]; then
+	if [ -x "/usr/bin/deb-systemd-helper" ]; then
+		deb-systemd-helper purge 'resguard.service' >/dev/null || true
+		deb-systemd-helper unmask 'resguard.service' >/dev/null || true
+	fi
+	rm -rf /var/lib/resguard /etc/resguard
+fi

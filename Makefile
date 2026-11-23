@@ -15,7 +15,7 @@ DEV_SOCKET := $(DEV_DIR)/resguard.sock
 UID        := $(shell id -u)
 DEV_SLICE  := user.slice/user-$(UID).slice/user@$(UID).service
 
-.PHONY: all build test vet fmt clean install uninstall dev ctl check-go check-devdir
+.PHONY: all build test vet fmt clean install uninstall dev ctl check-go check-devdir package
 
 all: build
 
@@ -39,7 +39,7 @@ fmt:
 	gofmt -w .
 
 clean:
-	rm -rf bin/
+	rm -rf bin/ build/ dist/
 
 # Lanza el demonio en primer plano contra el systemd del usuario.
 dev: check-devdir build
@@ -58,8 +58,12 @@ install:
 	@[ -x bin/resguardd ] && [ -x bin/resguardctl ] || { echo "Faltan los binarios: ejecuta 'make build' (sin sudo) antes de 'sudo make install'."; exit 1; }
 	install -Dm0755 bin/resguardd   $(DESTDIR)$(PREFIX)/bin/resguardd
 	install -Dm0755 bin/resguardctl $(DESTDIR)$(PREFIX)/bin/resguardctl
-	install -Dm0644 deploy/systemd/resguard.service $(DESTDIR)/etc/systemd/system/resguard.service
+	@# La unidad del repo apunta a /usr/bin (la ruta de los paquetes); aquí se ajusta a PREFIX.
+	sed 's#^ExecStart=/usr/bin/#ExecStart=$(PREFIX)/bin/#' deploy/systemd/resguard.service > bin/resguard.service
+	install -Dm0644 bin/resguard.service $(DESTDIR)/etc/systemd/system/resguard.service
 	install -Dm0644 deploy/sysusers.d/resguard.conf $(DESTDIR)/usr/lib/sysusers.d/resguard.conf
+	install -Dm0644 deploy/man/resguardctl.1 $(DESTDIR)$(PREFIX)/share/man/man1/resguardctl.1
+	install -Dm0644 deploy/man/resguardd.8 $(DESTDIR)$(PREFIX)/share/man/man8/resguardd.8
 	@# La configuración solo se instala si no existe, para no pisar la del usuario.
 	@if [ -e $(DESTDIR)/etc/resguard/config.yaml ]; then \
 		echo "Se conserva la configuración existente en /etc/resguard/config.yaml"; \
@@ -71,6 +75,13 @@ install:
 uninstall:
 	-systemctl disable --now resguard
 	rm -f $(DESTDIR)$(PREFIX)/bin/resguardd $(DESTDIR)$(PREFIX)/bin/resguardctl
+	rm -f $(DESTDIR)$(PREFIX)/share/man/man1/resguardctl.1 $(DESTDIR)$(PREFIX)/share/man/man8/resguardd.8
 	rm -f $(DESTDIR)/etc/systemd/system/resguard.service $(DESTDIR)/usr/lib/sysusers.d/resguard.conf
 	@echo "Se conservan /etc/resguard (configuración) y /var/lib/resguard (incidencias); bórralos a mano si ya no los quieres."
 	-systemctl daemon-reload
+
+# Genera los paquetes .deb y .rpm y los archivos .tar.gz en dist/, sin publicar
+# nada (requiere goreleaser). Las versiones publicadas las genera GitHub Actions.
+package: check-go
+	@command -v goreleaser >/dev/null || { echo "Falta goreleaser: go install github.com/goreleaser/goreleaser/v2@v2.20.0"; exit 1; }
+	goreleaser release --snapshot --clean

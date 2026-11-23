@@ -74,3 +74,42 @@ jobs:
 
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+
+  packages:
+    name: Paquetes (.deb/.rpm) y lintian
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.20.0
+          args: release --snapshot --clean
+
+      - name: lintian
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lintian
+          lintian --fail-on warning --pedantic dist/*.deb
+
+      - name: Instalar, actualizar y purgar el .deb
+        run: |
+          deb=$(ls dist/resguard_*_amd64.deb)
+          sudo apt-get install -y "./$deb"
+          resguardctl version || true
+          sudo resguardd -check-config
+          systemctl is-enabled resguard
+          systemctl is-active resguard
+          resguardctl -socket /run/resguard/resguard.sock ping || sudo resguardctl ping
+          sudo apt-get install -y --reinstall "./$deb"
+          systemctl is-active resguard
+          sudo apt-get purge -y resguard
+          test ! -e /etc/resguard && test ! -e /usr/bin/resguardd
