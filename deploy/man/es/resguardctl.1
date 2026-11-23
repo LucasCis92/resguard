@@ -1,0 +1,106 @@
+.TH RESGUARDCTL 1 "noviembre de 2026" "resguard" "Órdenes de usuario"
+.SH NOMBRE
+resguardctl \- consulta el monitor de recursos resguard
+.SH SINOPSIS
+.B resguardctl
+.RB [ \-socket
+.IR ruta ]
+.RI [ orden " [" argumentos ...]]
+.SH DESCRIPCIÓN
+.B resguardctl
+se comunica con el demonio
+.BR resguardd (8)
+para mostrar el estado del sistema, el consumo de cada servicio, aplicación y
+contenedor, y las incidencias registradas (picos de recursos, OOM kills y caídas
+de servicios).
+.PP
+Sin
+.I orden
+abre una sesión interactiva con historial (flechas arriba y abajo) y
+autocompletado (Tab). Con una
+.I orden
+la ejecuta y termina.
+.PP
+Para usarlo sin
+.BR sudo ,
+el usuario debe pertenecer al grupo
+.BR resguard :
+.B sudo usermod \-aG resguard $USER
+y volver a iniciar sesión.
+.SH ÓRDENES
+.TP
+.B status
+Resumen: CPU, memoria, swap, carga, presión (PSI) e incidencias de la última hora.
+.TP
+.BR watch " [" \fIsegundos\fR ]
+Vista en vivo a pantalla completa. Teclas: flechas para elegir una fila,
+.B Enter
+para ver sus procesos,
+.BR a / s / d / t
+para mostrar solo aplicaciones, servicios, contenedores o todo,
+.BR c / m
+para ordenar por CPU o memoria,
+.B Esc
+para volver y
+.B q
+para salir.
+.TP
+.BR services " [" cpu | mem "] [" apps | servicios | contenedores | sesiones "] [" \fIn\fR ]
+Lo que más consume, con su tipo, límite de memoria y OOM kills.
+.TP
+.BR history " [" \fIn\fR ]
+Las últimas \fIn\fR muestras (20 por defecto).
+.TP
+.BR events " [" \fIn\fR ]
+Las últimas \fIn\fR incidencias (20 por defecto).
+.TP
+.BI event " id"
+Detalle de una incidencia, con el estado del sistema y lo que más consumía.
+.TP
+.BR logs " [" \fIn\fR "] [" avisos "] [" seguir ]
+Logs del servicio desde el journal: las últimas \fIn\fR líneas, solo avisos y
+errores, o en vivo (Ctrl+C vuelve). Los logs del demonio están siempre en inglés.
+.TP
+.B config
+Configuración en uso y archivo del que se cargó.
+.TP
+.BR ping ", " version ", " help
+Utilidades.
+.SH OPCIONES
+.TP
+.BI \-socket " ruta"
+Socket del demonio (por defecto
+.IR /run/resguard/resguard.sock ).
+.SH ENTORNO
+.TP
+.B RESGUARD_LANG
+Idioma de la CLI:
+.B es
+o
+.BR en .
+Si no está definida se usa el idioma del sistema
+.RB ( LANG ", " LC_MESSAGES ", " LANGUAGE );
+cualquier idioma distinto del español usa inglés.
+.TP
+.B NO_COLOR
+Si está definida, la salida no usa colores.
+.TP
+.B XDG_STATE_HOME
+Directorio del historial de órdenes (por defecto
+.IR ~/.local/state ).
+.SH ARCHIVOS
+.TP
+.I ~/.local/state/resguard/history
+Historial del modo interactivo (solo legible por el usuario). Las líneas que
+empiezan por un espacio no se guardan.
+.SH EJEMPLOS
+.TP
+.B resguardctl services apps mem
+Aplicaciones que más memoria usan.
+.TP
+.B resguardctl logs avisos seguir
+Picos, OOM kills y caídas a medida que ocurren.
+.SH VÉASE TAMBIÉN
+.BR resguardd (8),
+.BR journalctl (1),
+.BR systemctl (1)

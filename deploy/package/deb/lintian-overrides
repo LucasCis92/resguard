@@ -1,5 +1,5 @@
-# Los binarios se compilan estáticos a propósito (Go sin cgo): así el mismo
-# paquete funciona en cualquier versión de Debian y Ubuntu sin depender de las
-# librerías del sistema.
+# The binaries are statically linked on purpose (Go without cgo): this way the
+# same package works on any Debian and Ubuntu release without depending on the
+# system's libraries.
 resguard: statically-linked-binary [usr/bin/resguardctl]
 resguard: statically-linked-binary [usr/bin/resguardd]

@@ -1,49 +1,49 @@
-# Configuración de resguard.
+# resguard configuration.
 #
-# Todas las claves son opcionales: si borras una, se usa el valor por defecto
-# (que es el que aparece aquí). Después de editar este archivo:
+# Every key is optional: if you delete one, its default value (the one shown
+# here) is used. After editing this file:
 #
-#   sudo resguardd -check-config      comprueba que sea válido
-#   sudo systemctl reload resguard    aplica los cambios sin perder el historial
+#   sudo resguardd -check-config      check that it is valid
+#   sudo systemctl reload resguard    apply the changes without losing history
 #
-# Si el archivo tiene un error, el servicio sigue con la configuración anterior
-# y lo indica en el journal (journalctl -u resguard).
+# If the file has an error, the service keeps the previous configuration and
+# reports it in the journal (journalctl -u resguard).
 
-# Cada cuánto se toma una muestra (ejemplos: 500ms, 2s, 1m).
+# How often a sample is taken (examples: 500ms, 2s, 1m).
 interval: 2s
 
-# Cuánto tiempo de muestras se conserva en memoria para "history" y "watch".
+# How much sample history is kept in memory for "history" and "watch".
 history: 1h
 
-# A partir de qué valor se registra un pico. 0 desactiva la alerta.
-# Un pico termina cuando el valor baja claramente del umbral: 10 puntos en
-# CPU, 5 en memoria y a la mitad en las de presión (PSI).
+# Values above which a peak is recorded. 0 disables the alert.
+# A peak ends when the value drops clearly below the threshold: 10 points for
+# CPU, 5 for memory and to half the value for pressure (PSI).
 thresholds:
-  # Uso de CPU de todo el sistema, en %.
+  # CPU usage of the whole system, in %.
   cpu: 90
-  # Memoria en uso, en %.
+  # Memory in use, in %.
   memory: 90
-  # Presión (PSI): % del tiempo en que hubo tareas esperando por el recurso.
-  # Detecta contención aunque el uso no parezca alto.
+  # Pressure (PSI): % of time in which tasks were waiting for the resource.
+  # It detects contention even when usage does not look high.
   psi_cpu: 40
   psi_memory: 10
   psi_io: 30
-  # Muestras seguidas por encima del umbral para registrar el pico.
-  # Con interval de 2s, sustain 2 ignora picos de menos de unos 4 segundos.
+  # Consecutive samples above the threshold needed to record the peak.
+  # With an interval of 2s, sustain 2 ignores peaks shorter than about 4 seconds.
   sustain: 2
 
 services:
-  # Dónde buscar qué vigilar (slices de cgroups v2):
-  #   system.slice  servicios del sistema y contenedores Docker
-  #   user.slice    aplicaciones de las sesiones de escritorio (Chrome, VS Code…)
-  # Quita user.slice si no quieres que los miembros del grupo resguard vean
-  # qué aplicaciones usan los demás usuarios de este equipo.
+  # Where to look for what to monitor (cgroup v2 slices):
+  #   system.slice  system services and Docker containers
+  #   user.slice    applications of desktop sessions (Chrome, VS Code…)
+  # Remove user.slice if members of the resguard group should not see which
+  # applications other users of this machine run.
   slices:
     - system.slice
     - user.slice
-  # Unidades que no generan incidencias (ni caídas ni OOM kills). Se comparan
-  # con el nombre de la unidad y admiten comodines, por ejemplo:
-  #   "snap.*"     servicios de snap
-  #   "docker-*"   todos los contenedores Docker
-  #   "app-*"      todas las aplicaciones de escritorio
+  # Units that never raise incidents (neither failures nor OOM kills). They
+  # are matched against the unit name and accept wildcards, for example:
+  #   "snap.*"     snap services
+  #   "docker-*"   every Docker container
+  #   "app-*"      every desktop application
   ignore: []

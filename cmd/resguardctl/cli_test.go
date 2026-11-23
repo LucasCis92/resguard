@@ -13,6 +13,7 @@ import (
 
 	"github.com/LucasCis92/resguard/internal/collector"
 	"github.com/LucasCis92/resguard/internal/events"
+	"github.com/LucasCis92/resguard/internal/i18n"
 	"github.com/LucasCis92/resguard/internal/ipc"
 	"github.com/LucasCis92/resguard/internal/metrics"
 )
@@ -27,20 +28,20 @@ func testCompleter() *completer {
 func TestComplete(t *testing.T) {
 	tests := []struct {
 		name, line string
-		pos        int // -1: al final
+		pos        int // -1: at the end
 		wantLine   string
 		wantOpts   []string
 	}{
-		{"única opción", "sta", -1, "status ", nil},
-		{"prefijo común", "ev", -1, "event", nil},
-		{"varias sin avance", "event", -1, "event", []string{"event", "events"}},
-		{"sin coincidencias", "zzz", -1, "zzz", nil},
-		{"argumento", "services m", -1, "services mem ", nil},
-		{"argumentos posibles", "services ", -1, "services ", []string{"cpu", "mem"}},
-		{"help completa órdenes", "help hi", -1, "help history ", nil},
-		{"orden sin argumentos conocidos", "status x", -1, "status x", nil},
-		{"segundo argumento no se completa", "services cpu 1", -1, "services cpu 1", nil},
-		{"cursor en medio", "st status", 2, "status status", nil},
+		{"single option", "sta", -1, "status ", nil},
+		{"common prefix", "ev", -1, "event", nil},
+		{"several, no progress", "event", -1, "event", []string{"event", "events"}},
+		{"no match", "zzz", -1, "zzz", nil},
+		{"argument", "services m", -1, "services mem ", nil},
+		{"possible arguments", "services ", -1, "services ", []string{"cpu", "mem"}},
+		{"help completes commands", "help hi", -1, "help history ", nil},
+		{"command without known arguments", "status x", -1, "status x", nil},
+		{"second argument is not completed", "services cpu 1", -1, "services cpu 1", nil},
+		{"cursor in the middle", "st status", 2, "status status", nil},
 	}
 	c := testCompleter()
 	for _, tt := range tests {
@@ -50,24 +51,33 @@ func TestComplete(t *testing.T) {
 		}
 		line, newPos, opts := c.complete(tt.line, pos)
 		if line != tt.wantLine || !reflect.DeepEqual(opts, tt.wantOpts) {
-			t.Errorf("%s: complete(%q) = %q, %v; quiero %q, %v", tt.name, tt.line, line, opts, tt.wantLine, tt.wantOpts)
+			t.Errorf("%s: complete(%q) = %q, %v; want %q, %v", tt.name, tt.line, line, opts, tt.wantLine, tt.wantOpts)
 		}
 		if newPos < 0 || newPos > len(line) {
-			t.Errorf("%s: posición fuera de rango: %d", tt.name, newPos)
+			t.Errorf("%s: position out of range: %d", tt.name, newPos)
 		}
 	}
 }
 
+func TestCompletionArgsFollowLanguage(t *testing.T) {
+	if got := completionArgs(i18n.Spanish)["logs"]; !reflect.DeepEqual(got, []string{"avisos", "seguir"}) {
+		t.Errorf("Spanish logs arguments = %v", got)
+	}
+	if got := completionArgs(i18n.English)["services"]; !reflect.DeepEqual(got, []string{"cpu", "mem", "apps", "services", "containers", "sessions"}) {
+		t.Errorf("English services arguments = %v", got)
+	}
+}
+
 func TestHistory(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "estado", "resguard", "history")
+	path := filepath.Join(t.TempDir(), "state", "resguard", "history")
 	h := loadHistory(path, 3)
 
-	for _, e := range []string{"status", "status ", "", "   ", " secreto", "events", "services mem ", "history 5"} {
+	for _, e := range []string{"status", "status ", "", "   ", " secret", "events", "services mem ", "history 5"} {
 		h.Add(e)
 	}
-	// Sin vacías, sin duplicado consecutivo, sin la que empieza por espacio, máximo 3.
+	// No empty lines, no consecutive duplicate, none starting with a space, 3 at most.
 	if got := []string{h.At(0), h.At(1), h.At(2)}; h.Len() != 3 || !reflect.DeepEqual(got, []string{"history 5", "services mem", "events"}) {
-		t.Fatalf("historial = %d %v", h.Len(), got)
+		t.Fatalf("history = %d %v", h.Len(), got)
 	}
 
 	fi, err := os.Stat(path)
@@ -75,24 +85,24 @@ func TestHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	if perm := fi.Mode().Perm(); perm != 0o600 {
-		t.Errorf("permisos del historial = %o, quiero 600", perm)
+		t.Errorf("history file mode = %o, want 600", perm)
 	}
 	if di, _ := os.Stat(filepath.Dir(path)); di.Mode().Perm() != 0o700 {
-		t.Errorf("permisos del directorio = %o, quiero 700", di.Mode().Perm())
+		t.Errorf("directory mode = %o, want 700", di.Mode().Perm())
 	}
 	data, _ := os.ReadFile(path)
-	if strings.Contains(string(data), "secreto") {
-		t.Error("una línea que empieza por espacio no debe guardarse")
+	if strings.Contains(string(data), "secret") {
+		t.Error("a line starting with a space must not be saved")
 	}
 
-	// Al recargar se recupera y se recorta al máximo.
+	// Reloading restores it and trims it to the maximum.
 	h2 := loadHistory(path, 3)
 	if h2.Len() != 3 || h2.At(0) != "history 5" || h2.At(2) != "events" {
-		t.Errorf("historial recargado = %v", h2.entries)
+		t.Errorf("reloaded history = %v", h2.entries)
 	}
 	data, _ = os.ReadFile(path)
 	if n := strings.Count(string(data), "\n"); n != 3 {
-		t.Errorf("el fichero debería quedar recortado a 3 líneas, tiene %d", n)
+		t.Errorf("the file should be trimmed to 3 lines, it has %d", n)
 	}
 }
 
@@ -100,20 +110,20 @@ func TestHistoryWithoutFile(t *testing.T) {
 	h := loadHistory("", 10)
 	h.Add("status")
 	if h.Len() != 1 || h.At(0) != "status" {
-		t.Errorf("historial en memoria = %v", h.entries)
+		t.Errorf("in-memory history = %v", h.entries)
 	}
 }
 
 func TestTruncateANSI(t *testing.T) {
 	colored := "ab" + ansiRed + "cdé" + ansiReset + "fg"
 	if got := truncateANSI(colored, 4, true); got != "ab"+ansiRed+"cd"+ansiReset {
-		t.Errorf("con color = %q", got)
+		t.Errorf("colored = %q", got)
 	}
 	if got := truncateANSI("ñandú", 3, false); got != "ñan" {
 		t.Errorf("multibyte = %q", got)
 	}
-	if got := truncateANSI("corto", 10, false); got != "corto" {
-		t.Errorf("sin recorte = %q", got)
+	if got := truncateANSI("short", 10, false); got != "short" {
+		t.Errorf("not cut = %q", got)
 	}
 }
 
@@ -130,15 +140,15 @@ func testSnapshot() ipc.Snapshot {
 		Services: []collector.ServiceSample{
 			{Name: "small.service", Kind: metrics.KindService, CPUPercent: 1, MemBytes: 900 << 20},
 			{Name: "busy.service", Kind: metrics.KindService, CPUPercent: 50, MemBytes: 10 << 20, MemMax: 512 << 20},
-			{Name: "un-servicio-con-un-nombre-larguísimo-que-no-entra.service", Kind: metrics.KindService, CPUPercent: 2},
+			{Name: "a-service-with-a-very-very-long-name-that-does-not-fit.service", Kind: metrics.KindService, CPUPercent: 2},
 			{Name: "app-com.google.Chrome-5016.scope", Display: "Chrome", Kind: metrics.KindApp, CPUPercent: 30, MemBytes: 2 << 30},
 			{Name: `app-gnome-google\x2dchrome-5016.scope`, Display: "Chrome", Kind: metrics.KindApp, CPUPercent: 5, MemBytes: 1 << 30},
 			{Name: "app-gnome-code-6255.scope", Display: "code", Kind: metrics.KindApp, CPUPercent: 20, MemBytes: 3 << 30},
 			{Name: "docker-abc.scope", Display: "laravel_app", Kind: metrics.KindContainer, CPUPercent: 0.5, MemBytes: 50 << 20},
 		},
 		Events: []events.Event{
-			{Time: now.Add(-48 * time.Hour), Severity: events.Warning, Message: "pico viejo"},
-			{Time: now.Add(-time.Minute), Severity: events.Critical, Message: "nginx.service se cayó"},
+			{Time: now.Add(-48 * time.Hour), Kind: events.PeakStart, Severity: events.Warning, Resource: "cpu", Value: 91, Threshold: 90},
+			{Time: now.Add(-time.Minute), Kind: events.ServiceFailed, Severity: events.Critical, Service: "nginx.service", Reason: "exit-code", ExitStatus: 1},
 		},
 		Interval: 2 * time.Second,
 	}
@@ -152,7 +162,7 @@ func testView(snap ipc.Snapshot) view {
 	return view{width: 110, height: 30, now: snap.Sample.Time, refresh: 2 * time.Second}
 }
 
-// selectedLine devuelve la fila marcada como elegida.
+// selectedLine returns the row marked as selected.
 func selectedLine(frame string) string {
 	for _, l := range plain(frame) {
 		if strings.HasPrefix(l, "› ") {
@@ -169,35 +179,51 @@ func TestRenderUnits(t *testing.T) {
 	lines := plain(st.render(snap, nil, v))
 	frame := strings.Join(lines, "\n")
 
-	for _, want := range []string{"CPU", "95.0%", "carga 3.50", "6.0 GiB de 16.0 GiB", "memoria 2.5%", "512.0 MiB",
-		"(por CPU · todo)", "ÚLTIMAS INCIDENCIAS", "Enter procesos", "laravel_app", "contenedor"} {
+	for _, want := range []string{"CPU", "95.0%", "load 3.50", "6.0 GiB of 16.0 GiB", "memory 2.5%", "512.0 MiB",
+		"(by CPU · all)", "RECENT INCIDENTS", "Enter processes", "laravel_app", "container",
+		"nginx.service went down (exited with code 1)", "CPU usage peak: 91.0%"} {
 		if !strings.Contains(frame, want) {
-			t.Errorf("falta %q en:\n%s", want, frame)
+			t.Errorf("missing %q in:\n%s", want, frame)
 		}
 	}
 	if strings.Contains(frame, "\x1b[") {
-		t.Error("sin color no debe haber secuencias de color")
+		t.Error("without color there must be no color sequences")
 	}
-	// Chrome aparece una vez, con el consumo de sus dos unidades sumado.
+	// Chrome shows up once, with the usage of its two units added up.
 	if n := strings.Count(frame, "Chrome"); n != 1 || !strings.Contains(frame, "35.0") {
-		t.Errorf("Chrome debería aparecer una vez con 35%% de CPU:\n%s", frame)
+		t.Errorf("Chrome should appear once with 35%% CPU:\n%s", frame)
 	}
 	if !strings.Contains(selectedLine(st.render(snap, nil, v)), "busy.service") {
-		t.Error("sin elegir nada, la fila marcada debe ser la primera (busy.service)")
+		t.Error("with nothing selected, the marked row must be the first one (busy.service)")
 	}
-	if strings.Index(frame, "se cayó") > strings.Index(frame, "pico viejo") || !strings.Contains(frame, "10/11 10:00") {
-		t.Errorf("orden o formato de incidencias incorrecto:\n%s", frame)
+	// The most recent incident goes first; one from another day shows its date.
+	if strings.Index(frame, "went down") > strings.Index(frame, "peak:") || !strings.Contains(frame, "10/11 10:00") {
+		t.Errorf("wrong incident order or format:\n%s", frame)
 	}
 	for i, l := range lines {
 		if n := utf8.RuneCountInString(l); n > v.width {
-			t.Errorf("línea %d mide %d > %d: %q", i, n, v.width, l)
+			t.Errorf("line %d is %d wide > %d: %q", i, n, v.width, l)
 		}
 	}
 
 	st.sortBy = "mem"
 	frame = strings.Join(plain(st.render(snap, nil, v)), "\n")
-	if strings.Index(frame, "code") > strings.Index(frame, "small.service") || !strings.Contains(frame, "(por memoria") {
-		t.Error("ordenado por memoria, code (3 GiB) debe ir antes que small (900 MiB)")
+	if strings.Index(frame, "code") > strings.Index(frame, "small.service") || !strings.Contains(frame, "(by memory") {
+		t.Error("sorted by memory, code (3 GiB) must come before small (900 MiB)")
+	}
+}
+
+func TestRenderUnitsInSpanish(t *testing.T) {
+	snap := testSnapshot()
+	v := testView(snap)
+	v.p = i18n.New(i18n.Spanish)
+	frame := strings.Join(plain(newWatchState().render(snap, nil, v)), "\n")
+	for _, want := range []string{"carga 3.50", "6.0 GiB de 16.0 GiB", "memoria 2.5%", "(por CPU · todo)",
+		"ÚLTIMAS INCIDENCIAS", "Enter procesos", "contenedor", "NOMBRE", "TIPO",
+		"nginx.service se cayó (terminó con código 1)", "pico de uso de CPU: 91.0%", "CRÍTICO"} {
+		if !strings.Contains(frame, want) {
+			t.Errorf("missing %q in:\n%s", want, frame)
+		}
 	}
 }
 
@@ -214,48 +240,48 @@ func TestWatchKeys(t *testing.T) {
 	}
 	r := func(c rune) keypress { return keypress{code: keyRune, r: c} }
 
-	// Filtro: solo aplicaciones.
+	// Filter: applications only.
 	press(r('a'))
 	frame := strings.Join(plain(st.render(snap, nil, v)), "\n")
-	if strings.Contains(frame, "busy.service") || strings.Contains(frame, "laravel_app") || !strings.Contains(frame, "solo apps") {
-		t.Errorf("con el filtro de apps no deben verse servicios ni contenedores:\n%s", frame)
+	if strings.Contains(frame, "busy.service") || strings.Contains(frame, "laravel_app") || !strings.Contains(frame, "only apps") {
+		t.Errorf("with the apps filter no services or containers must show:\n%s", frame)
 	}
 	if !strings.Contains(selectedLine(st.render(snap, nil, v)), "Chrome") {
-		t.Error("la primera app (Chrome, más CPU) debería estar elegida")
+		t.Error("the first app (Chrome, most CPU) should be selected")
 	}
 
-	// Bajar una fila y abrir sus procesos.
+	// Move down a row and open its processes.
 	press(keypress{code: keyDown})
 	if !strings.Contains(selectedLine(st.render(snap, nil, v)), "code") {
-		t.Error("tras ↓ debería estar elegida code")
+		t.Error("after ↓ code should be selected")
 	}
 	press(keypress{code: keyUp})
 	if a := press(keypress{code: keyEnter}); a != actionRefresh || st.mode != modeProcs {
-		t.Fatalf("Enter debe abrir la vista de procesos y pedir datos: %v %v", a, st.mode)
+		t.Fatalf("Enter must open the process view and ask for data: %v %v", a, st.mode)
 	}
 	if len(st.target.Units) != 2 {
-		t.Errorf("Chrome tiene dos unidades y deben pedirse los procesos de ambas: %v", st.target.Units)
+		t.Errorf("Chrome has two units and the processes of both must be requested: %v", st.target.Units)
 	}
 
-	// Esc vuelve; la selección y el filtro se conservan.
+	// Esc goes back; the selection and the filter are kept.
 	press(keypress{code: keyEsc})
 	if st.mode != modeUnits || !strings.Contains(selectedLine(st.render(snap, nil, v)), "Chrome") {
-		t.Error("Esc debe volver a la lista con la misma fila elegida")
+		t.Error("Esc must go back to the list with the same row selected")
 	}
 
-	// Contenedores, y después todo.
+	// Containers, then everything.
 	press(r('d'))
 	frame = strings.Join(plain(st.render(snap, nil, v)), "\n")
 	if !strings.Contains(frame, "laravel_app") || strings.Contains(frame, "Chrome") {
-		t.Errorf("filtro de contenedores:\n%s", frame)
+		t.Errorf("container filter:\n%s", frame)
 	}
 	press(r('t'))
 	if frame = strings.Join(plain(st.render(snap, nil, v)), "\n"); !strings.Contains(frame, "busy.service") {
-		t.Error("t debe volver a mostrar todo")
+		t.Error("t must show everything again")
 	}
 
 	if press(r('q')) != actionQuit || press(keypress{code: keyEsc}) != actionQuit {
-		t.Error("q y Esc en la lista deben salir")
+		t.Error("q and Esc in the list must quit")
 	}
 }
 
@@ -272,14 +298,14 @@ func TestWatchScroll(t *testing.T) {
 	st.handle(keypress{code: keyEnd}, snap, v)
 	frame := st.render(snap, nil, v)
 	if !strings.Contains(selectedLine(frame), "s49.service") {
-		t.Errorf("tras Fin la última fila debe verse elegida:\n%s", strings.Join(plain(frame), "\n"))
+		t.Errorf("after End the last row must be visible and selected:\n%s", strings.Join(plain(frame), "\n"))
 	}
 	if len(plain(frame)) > v.height {
-		t.Errorf("el fotograma no debe superar el alto de la terminal")
+		t.Errorf("the frame must not be taller than the terminal")
 	}
 	st.handle(keypress{code: keyHome}, snap, v)
 	if !strings.Contains(selectedLine(st.render(snap, nil, v)), "s00.service") {
-		t.Error("tras Inicio debe estar elegida la primera fila")
+		t.Error("after Home the first row must be selected")
 	}
 }
 
@@ -301,32 +327,32 @@ func TestProcsView(t *testing.T) {
 
 	st.updateProcs(list(t0, 1000, 2000), nil)
 	frame := strings.Join(plain(st.render(snap, nil, v)), "\n")
-	if !strings.Contains(frame, "Midiendo") || !strings.Contains(frame, "Chrome (app) · 3 procesos") {
-		t.Errorf("primera lectura:\n%s", frame)
+	if !strings.Contains(frame, "Measuring") || !strings.Contains(frame, "Chrome (app) · 3 processes") {
+		t.Errorf("first reading:\n%s", frame)
 	}
 
-	// En 2 s: el renderer usó 4 s de CPU (400 ticks) = 2 núcleos de 4 = 50 %;
-	// la GPU, 80 ticks = 10 %; el principal, nada.
+	// In 2 s the renderer used 4 s of CPU (400 ticks) = 2 of 4 cores = 50 %;
+	// the GPU process 80 ticks = 10 %; the main process nothing.
 	st.updateProcs(list(t0.Add(2*time.Second), 1400, 2080), nil)
 	frame = strings.Join(plain(st.render(snap, nil, v)), "\n")
-	for _, want := range []string{"chrome — renderer", "chrome — gpu-process", "50.0", "10.0", "0.0", "Esc volver"} {
+	for _, want := range []string{"chrome — renderer", "chrome — gpu-process", "50.0", "10.0", "0.0", "Esc back"} {
 		if !strings.Contains(frame, want) {
-			t.Errorf("falta %q en:\n%s", want, frame)
+			t.Errorf("missing %q in:\n%s", want, frame)
 		}
 	}
 	if strings.Index(frame, "renderer") > strings.Index(frame, "gpu-process") {
-		t.Error("ordenado por CPU, el renderer (50%) debe ir antes que la GPU (10%)")
+		t.Error("sorted by CPU, the renderer (50%) must come before the GPU process (10%)")
 	}
-	if strings.Contains(frame, "Midiendo") {
-		t.Error("tras dos lecturas ya no se está midiendo")
+	if strings.Contains(frame, "Measuring") {
+		t.Error("after two readings it is no longer measuring")
 	}
 
-	st.updateProcs(ipc.ProcessList{}, errors.New("la unidad ya no está en ejecución"))
-	if frame = strings.Join(plain(st.render(snap, nil, v)), "\n"); !strings.Contains(frame, "ya no está en ejecución") {
-		t.Errorf("error de procesos:\n%s", frame)
+	st.updateProcs(ipc.ProcessList{}, errors.New("the unit is no longer running"))
+	if frame = strings.Join(plain(st.render(snap, nil, v)), "\n"); !strings.Contains(frame, "no longer running") {
+		t.Errorf("process error:\n%s", frame)
 	}
 	if st.handle(keypress{code: keyBack}, snap, v); st.mode != modeUnits {
-		t.Error("Retroceso debe volver a la lista")
+		t.Error("Backspace must go back to the list")
 	}
 }
 
@@ -344,7 +370,7 @@ func TestParseKeys(t *testing.T) {
 		{"\x7f", []keypress{{code: keyBack}}},
 		{"\x03", []keypress{{code: keyQuit}}},
 		{"am", []keypress{{code: keyRune, r: 'a'}, {code: keyRune, r: 'm'}}},
-		{"\x1b[1;5A", []keypress{}}, // Ctrl+↑: secuencia desconocida, se ignora
+		{"\x1b[1;5A", []keypress{}}, // Ctrl+↑: unknown sequence, ignored
 	}
 	for _, tt := range tests {
 		got := parseKeys([]byte(tt.in))
@@ -352,7 +378,7 @@ func TestParseKeys(t *testing.T) {
 			continue
 		}
 		if !reflect.DeepEqual(got, tt.want) {
-			t.Errorf("parseKeys(%q) = %v, quiero %v", tt.in, got, tt.want)
+			t.Errorf("parseKeys(%q) = %v, want %v", tt.in, got, tt.want)
 		}
 	}
 }
@@ -363,40 +389,42 @@ func TestRenderSmallTerminal(t *testing.T) {
 	st := newWatchState()
 	frame := st.render(snap, nil, v)
 	if lines := plain(frame); len(lines) > v.height {
-		t.Errorf("%d líneas en una terminal de %d", len(lines), v.height)
+		t.Errorf("%d lines in a %d-line terminal", len(lines), v.height)
 	}
 	if !strings.Contains(frame, ansiRed) || !strings.Contains(frame, ansiReverse) {
-		t.Error("con 95% de CPU la barra debería ir en rojo y la fila elegida en vídeo inverso")
+		t.Error("at 95% CPU the bar should be red and the selected row in reverse video")
 	}
 }
 
 func TestRenderError(t *testing.T) {
 	v := view{width: 80, height: 24, now: time.Now()}
-	frame := strings.Join(plain(newWatchState().render(ipc.Snapshot{}, errors.New("conexión rechazada"), v)), "\n")
-	if !strings.Contains(frame, "conexión rechazada") || !strings.Contains(frame, "Reintentando") {
-		t.Errorf("fotograma de error:\n%s", frame)
+	frame := strings.Join(plain(newWatchState().render(ipc.Snapshot{}, errors.New("connection refused"), v)), "\n")
+	if !strings.Contains(frame, "connection refused") || !strings.Contains(frame, "Retrying") {
+		t.Errorf("error frame:\n%s", frame)
 	}
 }
 
 func TestLogsArgs(t *testing.T) {
+	p := i18n.New(i18n.English)
 	tests := []struct {
 		args []string
 		want string
 	}{
 		{nil, "--unit resguard.service --lines 50 --no-hostname --output short --no-pager"},
 		{[]string{"200"}, "--unit resguard.service --lines 200 --no-hostname --output short --no-pager"},
+		{[]string{"warnings", "follow"}, "--unit resguard.service --lines 50 --no-hostname --output short --priority warning --follow"},
 		{[]string{"avisos", "seguir"}, "--unit resguard.service --lines 50 --no-hostname --output short --priority warning --follow"},
-		{[]string{"seguir", "10"}, "--unit resguard.service --lines 10 --no-hostname --output short --follow"},
+		{[]string{"follow", "10"}, "--unit resguard.service --lines 10 --no-hostname --output short --follow"},
 	}
 	for _, tt := range tests {
-		got, err := logsArgs(tt.args)
+		got, err := logsArgs(tt.args, p)
 		if err != nil || strings.Join(got, " ") != tt.want {
-			t.Errorf("logsArgs(%v) = %v, %v; quiero %s", tt.args, got, err, tt.want)
+			t.Errorf("logsArgs(%v) = %v, %v; want %s", tt.args, got, err, tt.want)
 		}
 	}
-	for _, bad := range [][]string{{"todo"}, {"-5"}, {"0"}, {"; rm -rf /"}} {
-		if _, err := logsArgs(bad); err == nil {
-			t.Errorf("logsArgs(%v) debería fallar", bad)
+	for _, bad := range [][]string{{"all"}, {"-5"}, {"0"}, {"; rm -rf /"}} {
+		if _, err := logsArgs(bad, p); err == nil {
+			t.Errorf("logsArgs(%v) should fail", bad)
 		}
 	}
 }

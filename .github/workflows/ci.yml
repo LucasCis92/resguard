@@ -5,12 +5,12 @@ on:
     branches: [main]
   pull_request:
 
-# El workflow solo necesita leer el código: si una acción de terceros fuera
-# comprometida, no podría escribir en el repo ni publicar nada.
+# The workflow only needs to read the code: if a third-party action were
+# compromised, it could neither write to the repository nor publish anything.
 permissions:
   contents: read
 
-# Un push nuevo cancela la ejecución anterior de la misma rama.
+# A new push cancels the previous run on the same branch.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -22,10 +22,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # La versión mínima declarada en go.mod y la última estable.
+        # The minimum version declared in go.mod and the latest stable one.
         go: [go.mod, stable]
     steps:
-      # Las acciones se fijan por commit (no por etiqueta, que su dueño podría mover).
+      # Actions are pinned by commit (not by tag, which their owner could move).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -35,33 +35,33 @@ jobs:
           go-version-file: ${{ matrix.go == 'go.mod' && 'go.mod' || '' }}
           go-version: ${{ matrix.go == 'stable' && 'stable' || '' }}
 
-      - name: Formato (gofmt)
+      - name: Formatting (gofmt)
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
-            echo "Archivos sin formatear (ejecuta 'make fmt'):"
+            echo "Unformatted files (run 'make fmt'):"
             echo "$unformatted"
             exit 1
           fi
 
-      - name: Análisis estático (go vet)
+      - name: Static analysis (go vet)
         run: go vet ./...
 
-      - name: Tests con detector de carreras
+      - name: Tests with the race detector
         run: go test -race -count=1 ./...
 
-      - name: Compilación
+      - name: Build
         run: make build
 
-      - name: Los binarios no contienen rutas de la máquina que compila
+      - name: The binaries contain no paths of the build machine
         run: |
           if grep -l "$HOME" bin/*; then
-            echo "Un binario contiene rutas locales: falta -trimpath en la compilación"
+            echo "A binary contains local paths: -trimpath is missing from the build"
             exit 1
           fi
 
   vulns:
-    name: Vulnerabilidades conocidas (govulncheck)
+    name: Known vulnerabilities (govulncheck)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,7 +76,7 @@ jobs:
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 
   packages:
-    name: Paquetes (.deb/.rpm) y lintian
+    name: Packages (.deb/.rpm) and lintian
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,7 +100,7 @@ jobs:
           sudo apt-get install -y -qq lintian
           lintian --fail-on warning --pedantic dist/*.deb
 
-      - name: Instalar, actualizar y purgar el .deb
+      - name: Install, upgrade and purge the .deb
         run: |
           deb=$(ls dist/resguard_*_amd64.deb)
           sudo apt-get install -y "./$deb"

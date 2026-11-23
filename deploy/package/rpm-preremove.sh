@@ -1,5 +1,5 @@
 #!/bin/sh
-# %preun del paquete .rpm. $1 = 0 al desinstalar, 1 al actualizar.
+# %preun of the .rpm package. $1 = 0 on removal, 1 on an upgrade.
 set -e
 
 if [ "$1" = 0 ]; then

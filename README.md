@@ -1,128 +1,105 @@
 # resguard
 
-Servicio para Linux que monitoriza el uso de recursos del sistema, avisa ante picos o
-situaciones críticas, registra las caídas de servicios provocadas por falta de recursos
-y permite ajustar dinámicamente los recursos asignados a cada servicio.
+**English** · [Español](README.es.md)
 
-> Estado: en fase inicial de desarrollo.
+A Linux service that monitors resource usage, records peaks and critical situations, and logs
+service failures caused by lack of resources, together with what was happening on the system at
+that moment. An interactive CLI shows everything live, down to the processes of each application.
 
-## Objetivos
+> Status: early development. The first public release is v0.1.0.
 
-- **Monitorización**: CPU, memoria, disco, E/S y red, a nivel de sistema y por servicio.
-- **Avisos**: alertas configurables por umbrales y por presión de recursos (PSI).
-- **Registro de incidencias**: detectar y loguear caídas de servicios causadas por
-  recursos (p. ej. OOM kills) o por picos, con el contexto de métricas del momento.
-- **Asignación dinámica**: modificar en caliente los límites de un servicio
-  (`CPUQuota`, `MemoryMax`, `IOWeight`, …) usando cgroups v2 a través de systemd.
-- **CLI interactiva**: consultar el estado y aplicar cambios desde la línea de comandos.
+## Features
 
-## Arquitectura prevista
+- **Monitoring**: CPU, memory, swap, load and pressure (PSI) of the whole system, and the usage of
+  every service, desktop application (Chrome, VS Code…) and container (Docker, Podman).
+- **Incidents**: resource peaks (with hysteresis), OOM kills and service failures (exit code,
+  signal, OOM, timeout…), each with the system state and the top consumers at that moment.
+- **Interactive CLI**: history, completion, a live `watch` view with filters and per-application
+  processes, logs and incident details.
+- **Configuration** in YAML with live reload, and a hardened systemd unit.
+- **English and Spanish** user interface.
+- Planned: **dynamic resource allocation**, changing a service's limits (`CPUQuota`, `MemoryMax`,
+  `IOWeight`…) on the fly through systemd.
 
-```
-┌──────────────┐   socket Unix   ┌──────────────────────────────┐
-│  CLI (cli)   │ ◄─────────────► │  Demonio (servicio systemd)  │
-└──────────────┘                 │  - recolector de métricas    │
-                                 │  - motor de alertas          │
-                                 │  - vigilante de servicios    │
-                                 │  - gestor de recursos        │
-                                 └──────────────┬───────────────┘
-                                                │ D-Bus / cgroups v2 / /proc
-                                                ▼
-                                           Kernel + systemd
-```
-
-Fuentes de información del sistema:
-
-- `/proc` y `/sys/fs/cgroup` para métricas generales y por cgroup.
-- `/proc/pressure/{cpu,memory,io}` (PSI) para detectar picos y contención.
-- `memory.events` de cada cgroup y el journal de systemd para detectar OOM kills y caídas.
-- D-Bus de systemd para consultar el estado de las unidades y cambiar sus propiedades.
-
-## Requisitos
-
-- Linux con **cgroups v2** (unified hierarchy) y **systemd**: Ubuntu ≥ 21.10, Debian ≥ 11,
-  Fedora ≥ 31 y la mayoría de distribuciones actuales.
-- Kernel ≥ 4.20 para PSI.
-- Arquitectura amd64 o arm64.
-- Para compilar desde el código: Go ≥ 1.22.
-
-## Estructura
+## Architecture
 
 ```
-cmd/resguardd/     demonio (servicio systemd)
-cmd/resguardctl/   CLI interactiva
-internal/daemon/   servidor del socket y despacho de órdenes
-internal/ipc/      protocolo JSON entre CLI y demonio, y cliente
-internal/metrics/  lectura de métricas desde /proc y cgroups v2
-internal/collector/ muestreo periódico e historial en memoria
-internal/events/   detección de picos y OOM kills, y registro de incidencias
-internal/units/    vigilancia de caídas de servicios por D-Bus de systemd
-internal/version/  versión inyectada al compilar
-internal/config/   archivo de configuración
-deploy/systemd/    unidad de systemd
-deploy/sysusers.d/ grupo "resguard" para usar la CLI sin root
-deploy/man/        páginas de manual
-deploy/package/    scripts y metadatos de los paquetes .deb y .rpm
+┌──────────────┐  Unix socket   ┌──────────────────────────────┐
+│ resguardctl  │ ◄────────────► │  resguardd (systemd service) │
+│ (CLI)        │                │  - metrics collector         │
+└──────────────┘                │  - peak and OOM detector     │
+                                │  - service failure watcher   │
+                                └──────────────┬───────────────┘
+                                               │ D-Bus / cgroups v2 / /proc
+                                               ▼
+                                          Kernel + systemd
 ```
 
-## Compilación
+Data sources:
 
-```bash
-make build      # genera bin/resguardd y bin/resguardctl
-make test vet   # pruebas y análisis estático
-```
+- `/proc` and `/sys/fs/cgroup` for system-wide and per-cgroup metrics.
+- `/proc/pressure/{cpu,memory,io}` (PSI) to detect peaks and contention.
+- Each cgroup's `memory.events` to detect OOM kills.
+- systemd's D-Bus API to learn when and why a service failed.
 
-## Uso
+## Requirements
 
-### Instalación
+- Linux with **cgroups v2** (unified hierarchy) and **systemd**: Ubuntu ≥ 21.10, Debian ≥ 11,
+  Fedora ≥ 31 and most current distributions.
+- Kernel ≥ 4.20 for PSI.
+- amd64 or arm64.
+- To build from source: Go ≥ 1.22.
 
-**Ubuntu y Debian.** Descarga el `.deb` de tu arquitectura desde la
-[página de releases](https://github.com/LucasCis92/resguard/releases) e instálalo:
+## Installation
+
+**Ubuntu and Debian.** Download the `.deb` for your architecture from the
+[releases page](https://github.com/LucasCis92/resguard/releases) and install it:
 
 ```bash
 sudo apt install ./resguard_0.1.0-1_amd64.deb
 ```
 
-**Fedora, RHEL y derivadas:**
+**Fedora, RHEL and derivatives:**
 
 ```bash
 sudo dnf install ./resguard-0.1.0-1.x86_64.rpm
 ```
 
-El paquete instala los programas, el servicio de systemd, la configuración en
-`/etc/resguard/config.yaml` y las páginas de manual (`man resguardctl`, `man resguardd`); crea el
-grupo `resguard` y deja el servicio en marcha y activado al arrancar. Para usar la CLI sin `sudo`:
+The package installs the programs, the systemd service, the configuration in
+`/etc/resguard/config.yaml` and the man pages (`man resguardctl`, `man resguardd`); it creates the
+`resguard` group and leaves the service running and enabled at boot. To use the CLI without
+`sudo`:
 
 ```bash
 sudo usermod -aG resguard "$USER"
 ```
 
-y vuelve a iniciar sesión.
+and log in again.
 
-| Para… | Ubuntu / Debian | Fedora |
-|-------|-----------------|--------|
-| actualizar | `sudo apt install ./resguard_<nueva>_amd64.deb` | `sudo dnf install ./resguard-<nueva>.x86_64.rpm` |
-| desinstalar conservando configuración e incidencias | `sudo apt remove resguard` | `sudo dnf remove resguard` |
-| desinstalar y borrar todo | `sudo apt purge resguard` | — |
+| To… | Ubuntu / Debian | Fedora |
+|-----|-----------------|--------|
+| upgrade | `sudo apt install ./resguard_<new>_amd64.deb` | `sudo dnf install ./resguard-<new>.x86_64.rpm` |
+| uninstall, keeping configuration and incidents | `sudo apt remove resguard` | `sudo dnf remove resguard` |
+| uninstall and delete everything | `sudo apt purge resguard` | — |
 
-Las actualizaciones nunca sobrescriben tu `/etc/resguard/config.yaml`: si la versión nueva trae
-cambios en el archivo de ejemplo, `apt` te pregunta qué hacer.
+Upgrades never overwrite your `/etc/resguard/config.yaml`: if the new version changes the example
+file, `apt` asks you what to do.
 
-**Verificar el paquete antes de instalarlo** (recomendado). Cada release incluye una atestación
-firmada por GitHub que demuestra que el paquete se generó en este repositorio, a partir de su
-código y sin modificaciones posteriores:
+**Verify the package before installing it** (recommended). Every release includes an attestation
+signed by GitHub proving that the package was built in this repository, from its code, with no
+later changes:
 
 ```bash
 gh attestation verify resguard_0.1.0-1_amd64.deb --repo LucasCis92/resguard
 ```
 
-O, como mínimo, comprueba su suma SHA-256 con el archivo `SHA256SUMS` de la release:
+Or, at least, check its SHA-256 sum against the release's `SHA256SUMS` file:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 
-**Desde el código** (requiere Go):
+**From source** (requires Go):
 
 ```bash
 make build
@@ -130,93 +107,102 @@ sudo make install
 sudo systemctl enable --now resguard
 ```
 
-`make install` usa `/usr/local`; `sudo make uninstall` lo revierte. Si pasas de esta instalación
-al paquete, ejecuta antes `sudo make uninstall`: si no, quedarían dos copias y la de
-`/usr/local/bin` tendría prioridad.
+`make install` uses `/usr/local`; `sudo make uninstall` reverts it. If you move from this
+installation to the package, run `sudo make uninstall` first: otherwise there would be two copies
+and the one in `/usr/local/bin` would take precedence.
 
-Para ver los logs y diagnosticar problemas, consulta [Logs y diagnóstico](#logs-y-diagnóstico).
-
-### CLI
+## Usage
 
 ```bash
-resguardctl            # modo interactivo
-resguardctl status     # orden única
-resguardctl watch      # vista en vivo
+resguardctl            # interactive mode
+resguardctl status     # single command
+resguardctl watch      # live view
 ```
 
-| Orden | Qué muestra |
-|-------|-------------|
-| `status` | CPU, memoria, swap, carga, PSI y número de incidencias en la última hora |
-| `watch [segundos]` | vista en vivo a pantalla completa: barras de uso, lo que más consume e incidencias recientes. Permite filtrar y ver los procesos de cada aplicación (ver abajo) |
-| `history [n]` | las últimas *n* muestras (20 por defecto) |
-| `services [cpu\|mem] [apps\|servicios\|contenedores\|sesiones] [n]` | lo que más consume, con su tipo, límite de memoria y OOM kills. Por ejemplo, `services apps mem` muestra las aplicaciones que más memoria usan |
-| `events [n]` | las últimas *n* incidencias |
-| `event <id>` | el detalle de una incidencia, con el estado del sistema y lo que más consumía en ese momento |
-| `logs [n] [avisos] [seguir]` | los logs del servicio: las últimas *n* líneas (50 por defecto), solo avisos y errores, o en vivo (`Ctrl+C` vuelve a la CLI) |
-| `config` | la configuración en uso y de qué archivo se cargó |
-| `help` | todas las órdenes con su uso |
+| Command | What it shows |
+|---------|---------------|
+| `status` | CPU, memory, swap, load, PSI and the number of incidents in the last hour |
+| `watch [seconds]` | full-screen live view: usage bars, top consumers and recent incidents; lets you filter and see each application's processes (see below) |
+| `history [n]` | the last *n* samples (20 by default) |
+| `services [cpu\|mem] [apps\|services\|containers\|sessions] [n]` | the top consumers, with their kind, memory limit and OOM kills; for example `services apps mem` lists the applications using the most memory |
+| `events [n]` | the last *n* incidents |
+| `event <id>` | details of an incident, with the system state and the top consumers at that moment |
+| `logs [n] [warnings] [follow]` | the service logs: the last *n* lines (50 by default), warnings and errors only, or live (`Ctrl+C` goes back to the CLI) |
+| `config` | the configuration in use and the file it was loaded from |
+| `help` | every command with its usage |
 
-En el modo interactivo:
+In interactive mode:
 
-- **Flechas arriba/abajo**: historial de órdenes, que se conserva entre sesiones en
-  `~/.local/state/resguard/history` (solo legible por tu usuario). Como en bash, las líneas que
-  empiezan por espacio no se guardan.
-- **Tab**: autocompleta órdenes y argumentos; si hay varias opciones, las muestra.
-- **Ctrl+D**, **Ctrl+C** o `exit`: salir.
-- Si el demonio se reinicia, la CLI se reconecta sola.
+- **Up/down arrows**: command history, kept across sessions in `~/.local/state/resguard/history`
+  (readable only by you). As in bash, lines starting with a space are not saved.
+- **Tab**: completes commands and arguments; with several options, it lists them.
+- **Ctrl+D**, **Ctrl+C** or `exit`: quit.
+- If the daemon restarts, the CLI reconnects by itself.
 
-#### La vista `watch`
+### The `watch` view
 
-`resguardctl watch` se actualiza cada 2 segundos (o los indicados: `watch 1`). Tiene dos pantallas:
+`resguardctl watch` refreshes every 2 seconds (or as given: `watch 1`). It has two screens.
 
-**Lista de servicios, aplicaciones y contenedores**
+**Services, applications and containers**
 
-| Tecla | Acción |
-|-------|--------|
-| `↑` `↓` (o `k` `j`), `RePág` `AvPág`, `Inicio` `Fin` | elegir una fila |
-| `Enter` o `→` | ver los procesos de la fila elegida |
-| `a` / `s` / `d` / `t` | mostrar solo apps, servicios, contenedores (Docker) o todo |
-| `c` / `m` | ordenar por CPU o por memoria |
-| `q` o `Esc` | salir |
+| Key | Action |
+|-----|--------|
+| `↑` `↓` (or `k` `j`), `PgUp` `PgDn`, `Home` `End` | select a row |
+| `Enter` or `→` | show the processes of the selected row |
+| `a` / `s` / `d` / `t` | show only apps, services, containers (Docker) or everything |
+| `c` / `m` | sort by CPU or by memory |
+| `q` or `Esc` | quit |
 
-**Procesos de una aplicación o servicio**: PID, usuario, CPU, memoria, hilos y qué es cada
-proceso. En Chrome y en aplicaciones Electron (como VS Code) se indica su papel: `renderer` (una
-pestaña o extensión), `gpu-process`, `utility: audio`, `utility: video_capture` (la cámara),
-`utility: network`… Así se ve, por ejemplo, si en una videollamada el consumo viene del video, de la
-GPU o de otra pestaña. `Esc`, `←` o Retroceso vuelven a la lista; `c`/`m` ordenan; `q` sale.
+**Processes of an application or service**: PID, user, CPU, memory, threads and what each process
+is. For Chrome and Electron applications (such as VS Code) their role is shown: `renderer` (a tab
+or an extension), `gpu-process`, `utility: audio`, `utility: video_capture` (the camera),
+`utility: network`… This shows, for example, whether a video call's load comes from the video, the
+GPU or another tab. `Esc`, `←` or Backspace go back to the list; `c`/`m` sort; `q` quits.
 
-Por privacidad, nunca se muestra la línea de órdenes completa de un proceso (podría contener
-contraseñas o tokens): solo su nombre y, en Chromium/Electron, su papel.
+For privacy, a process's full command line is never shown (it may contain passwords or tokens):
+only its name and, for Chromium/Electron, its role.
 
-Los colores se desactivan con la variable de entorno `NO_COLOR=1`; la fila elegida se marca
-también con `›`.
+Set `NO_COLOR=1` to disable colors; the selected row is also marked with `›`.
 
-### Incidencias que se registran
+### Language
 
-| Tipo | Cuándo |
-|------|--------|
-| `peak_start` / `peak_end` | un recurso supera su umbral y cuando vuelve a la normalidad, con la duración y el valor máximo del pico. Usa histéresis para no generar ruido cuando el valor oscila en el umbral |
-| `oom_kill` | el contador `oom_kill` del cgroup de un servicio aumenta (incluso si el servicio sobrevive) |
-| `service_failed` | systemd informa de que un servicio cayó: código de salida, señal, OOM, timeout, watchdog… y si se reiniciará |
+The CLI speaks English and Spanish. It follows the system language (`LANG`, `LC_MESSAGES`,
+`LANGUAGE`); any language other than Spanish uses English. To choose explicitly:
 
-Cada incidencia incluye un contexto con la CPU, la memoria, la PSI y lo que más CPU y memoria
-consumía en ese momento. Se vigilan:
+```bash
+export RESGUARD_LANG=es
+```
 
-| Tipo | Ejemplos | Cómo se muestra |
-|------|----------|-----------------|
-| servicio | `nginx.service`, `mariadb.service` | el nombre de la unidad |
-| app | Chrome, VS Code, Terminal | el nombre de la aplicación (`app-com.google.Chrome-5016.scope` → `Chrome`) |
-| contenedor | contenedores Docker y Podman | el nombre del contenedor (`laravel_app`) |
-| sesión | sesiones de ssh o consola | `sesión 6` |
+Each user sees their own language: the CLI tells the daemon which language to answer in. The
+daemon's own logs (journal) and the output of `resguardd -check-config` are always in English.
 
-Las aplicaciones se ven gracias a `user.slice` en `services.slices`; quítalo de la configuración si
-no quieres que los miembros del grupo `resguard` vean qué aplicaciones usan los demás usuarios.
+## Recorded incidents
 
-### Configuración
+| Kind | When |
+|------|------|
+| `peak_start` / `peak_end` | a resource goes over its threshold, and when it is back to normal, with the peak's duration and maximum. Hysteresis avoids noise when the value hovers around the threshold |
+| `oom_kill` | the `oom_kill` counter of a unit's cgroup increases (even if the unit survives) |
+| `service_failed` | systemd reports that a service went down: exit code, signal, OOM, timeout, watchdog… and whether it will be restarted |
 
-Los umbrales, el intervalo de muestreo y los servicios vigilados se ajustan en
-`/etc/resguard/config.yaml`. `make install` instala un ejemplo comentado con los valores por
-defecto y nunca sobrescribe uno existente. Todas las claves son opcionales.
+Each incident carries a context with the CPU, memory, PSI and the top CPU and memory consumers at
+that moment. Monitored units:
+
+| Kind | Examples | Shown as |
+|------|----------|----------|
+| service | `nginx.service`, `mariadb.service` | the unit name |
+| app | Chrome, VS Code, Terminal | the application name (`app-com.google.Chrome-5016.scope` → `Chrome`) |
+| container | Docker and Podman containers | the container name (`laravel_app`) |
+| session | ssh or console sessions | `session-6` |
+
+Applications are visible thanks to `user.slice` in `services.slices`; remove it from the
+configuration if members of the `resguard` group should not see which applications other users
+run.
+
+## Configuration
+
+Thresholds, the sampling interval and the monitored units are set in `/etc/resguard/config.yaml`.
+The package (and `make install`) installs a commented example with the default values and never
+overwrites an existing one. Every key is optional.
 
 ```yaml
 interval: 2s
@@ -233,117 +219,138 @@ services:
   ignore: ["snap.*"]
 ```
 
-| Clave | Significado | Por defecto |
-|-------|-------------|-------------|
-| `interval` | periodo de muestreo | `2s` |
-| `history` | historial en memoria para `history` y `watch` | `1h` |
-| `thresholds.cpu` / `memory` | % a partir del cual hay un pico; termina al bajar 10 / 5 puntos | 90 / 90 |
-| `thresholds.psi_*` | presión (PSI some avg10) de CPU, memoria y E/S; termina al bajar a la mitad | 40 / 10 / 30 |
-| `thresholds.sustain` | muestras seguidas por encima del umbral para registrar el pico | 2 |
-| `services.slices` | slices de cgroups donde buscar qué vigilar: `system.slice` (servicios y contenedores) y `user.slice` (aplicaciones de escritorio) | `[system.slice, user.slice]` |
-| `services.ignore` | unidades que no generan incidencias; admite comodines (`snap.*`, `docker-*`, `app-*`) | `[]` |
+| Key | Meaning | Default |
+|-----|---------|---------|
+| `interval` | sampling period | `2s` |
+| `history` | in-memory history for `history` and `watch` | `1h` |
+| `thresholds.cpu` / `memory` | % above which there is a peak; it ends after dropping 10 / 5 points | 90 / 90 |
+| `thresholds.psi_*` | CPU, memory and I/O pressure (PSI some avg10); it ends after dropping to half | 40 / 10 / 30 |
+| `thresholds.sustain` | consecutive samples above the threshold needed to record a peak | 2 |
+| `services.slices` | cgroup slices to monitor: `system.slice` (services and containers) and `user.slice` (desktop applications) | `[system.slice, user.slice]` |
+| `services.ignore` | units that never raise incidents; wildcards allowed (`snap.*`, `docker-*`, `app-*`) | `[]` |
 
-Un umbral a `0` desactiva esa alerta. Para aplicar cambios:
+A threshold of `0` disables that alert. To apply changes:
 
 ```bash
-sudo resguardd -check-config          # valida y muestra la configuración resultante
-sudo systemctl reload resguard        # aplica sin reiniciar: se conservan historial y picos en curso
-resguardctl config                    # configuración en uso
+sudo resguardd -check-config          # validate and print the resulting configuration
+sudo systemctl reload resguard        # apply without restarting: history and ongoing peaks are kept
+resguardctl config                    # configuration in use
 ```
 
-Si el archivo tiene un error, el servicio sigue con la configuración anterior y lo registra en el
-journal indicando la línea. Por seguridad, el archivo se rechaza si otros usuarios pueden
-modificarlo.
+If the file has an error, the service keeps the previous configuration and logs the error with
+its line. For security, the file is rejected if other users can modify it.
 
-Las opciones de `resguardd` equivalentes (`-interval`, `-cpu-threshold`, … ; ver `resguardd -h`)
-tienen prioridad sobre el archivo y están pensadas para el desarrollo.
+The equivalent `resguardd` options (`-interval`, `-cpu-threshold`, …; see `resguardd -h`) take
+precedence over the file and are meant for development.
 
-### Logs y diagnóstico
+## Logs and troubleshooting
 
-Lo más habitual se puede hacer desde la CLI, sin recordar comandos de systemd:
+The most common tasks can be done from the CLI, without remembering systemd commands:
 
-| Para… | Desde la CLI | Con las herramientas del sistema |
-|-------|--------------|----------------------------------|
-| ver si el servicio funciona | `resguardctl status` | `systemctl status resguard` |
-| ver los logs recientes | `resguardctl logs` | `journalctl -u resguard -n 50` |
-| ver solo avisos y errores | `resguardctl logs avisos` | `journalctl -u resguard -p warning` |
-| seguir los logs en vivo | `resguardctl logs seguir` | `journalctl -u resguard -f` |
-| ver los logs desde una hora | — | `journalctl -u resguard --since "2026-11-17 11:00" --until "11:30"` |
-| ver las incidencias | `resguardctl events` | `sudo tail /var/lib/resguard/events.jsonl` |
-| entender una incidencia | `resguardctl event <id>` | — |
-| ver qué consume ahora | `resguardctl services` o `resguardctl watch` | — |
-| ver la configuración en uso | `resguardctl config` | `sudo resguardd -check-config` |
-| validar la configuración tras editarla | — | `sudo resguardd -check-config` |
-| aplicar la configuración | — | `sudo systemctl reload resguard` |
-| reiniciar el servicio | — | `sudo systemctl restart resguard` |
+| To… | From the CLI | With the system tools |
+|-----|--------------|-----------------------|
+| check that the service works | `resguardctl status` | `systemctl status resguard` |
+| see recent logs | `resguardctl logs` | `journalctl -u resguard -n 50` |
+| see warnings and errors only | `resguardctl logs warnings` | `journalctl -u resguard -p warning` |
+| follow the logs live | `resguardctl logs follow` | `journalctl -u resguard -f` |
+| see logs for a time range | — | `journalctl -u resguard --since "2026-11-17 11:00" --until "11:30"` |
+| see the incidents | `resguardctl events` | `sudo tail /var/lib/resguard/events.jsonl` |
+| understand an incident | `resguardctl event <id>` | — |
+| see what is using resources now | `resguardctl services` or `resguardctl watch` | — |
+| see the configuration in use | `resguardctl config` | `sudo resguardd -check-config` |
+| validate the configuration after editing it | — | `sudo resguardd -check-config` |
+| apply the configuration | — | `sudo systemctl reload resguard` |
+| restart the service | — | `sudo systemctl restart resguard` |
 
-Notas:
+Notes:
 
-- Para leer el journal sin `sudo`, tu usuario debe pertenecer al grupo `adm` o `systemd-journal`
-  (en Ubuntu, el primer usuario ya está en `adm`).
-- `events` muestra las incidencias que el demonio tiene en memoria (las últimas 1000). El registro
-  completo está en `/var/lib/resguard/events.jsonl`, una incidencia por línea en JSON, legible solo
-  por root. Con `jq` se puede filtrar, por ejemplo las caídas de servicios:
+- To read the journal without `sudo`, your user must belong to the `adm` or `systemd-journal`
+  group (on Ubuntu, the first user is already in `adm`).
+- `events` shows the incidents the daemon keeps in memory (the last 1000). The full log is in
+  `/var/lib/resguard/events.jsonl`, one incident per line in JSON, readable only by root. `jq` can
+  filter it, for example service failures:
   `sudo jq -c 'select(.kind == "service_failed")' /var/lib/resguard/events.jsonl`.
-- Si la CLI dice "permission denied", tu sesión todavía no tiene el grupo `resguard`: cierra sesión
-  y vuelve a entrar, o usa `sudo resguardctl`.
+- If the CLI says "permission denied", your session does not have the `resguard` group yet: log
+  out and back in, or use `sudo resguardctl`.
 
-## Desarrollo y pruebas locales
+## Development
 
-No hace falta root: el demonio puede vigilar los servicios de tu usuario (`systemd --user`).
-
-```bash
-make test                 # tests unitarios y de integración
-make dev                  # terminal 1: demonio en primer plano, con los logs
-make dev ARGS="-config deploy/config.yaml"   # probando un archivo de configuración
-make ctl                  # terminal 2: CLI interactiva
-make ctl ARGS=events      # o una orden suelta
+```
+cmd/resguardd/      daemon (systemd service)
+cmd/resguardctl/    interactive CLI
+internal/daemon/    socket server and command dispatch
+internal/ipc/       JSON protocol between the CLI and the daemon, and the client
+internal/metrics/   metrics from /proc and cgroups v2, and per-unit processes
+internal/collector/ periodic sampling and in-memory history
+internal/events/    peak and OOM detection, and the incident log
+internal/units/     service failure watching over systemd's D-Bus
+internal/config/    configuration file
+internal/i18n/      translations (English source strings, Spanish catalog)
+internal/version/   version injected at build time
+deploy/             systemd unit, sysusers group, example configuration, man pages and packaging
 ```
 
-Opciones extra para el demonio: `make dev ARGS="-cpu-threshold 50 -sustain 1"`.
-
-Para provocar incidencias con servicios de prueba:
+No root is needed: the daemon can watch your user's services (`systemd --user`).
 
 ```bash
-# Caída con reinicio automático
+make test                 # unit and integration tests
+make dev                  # terminal 1: daemon in the foreground, with its logs
+make dev ARGS="-config deploy/config.yaml"   # trying a configuration file
+make ctl                  # terminal 2: interactive CLI
+make ctl ARGS=events      # or a single command
+```
+
+Extra daemon options: `make dev ARGS="-cpu-threshold 50 -sustain 1"`.
+
+To trigger incidents with test services:
+
+```bash
+# Failure with automatic restart
 systemd-run --user --unit=rg-crash -p Restart=on-failure -p RestartSec=2 sh -c 'sleep 1; exit 3'
 
-# Caída por señal
+# Failure by signal
 systemd-run --user --unit=rg-segv python3 -c 'import os,signal,time; time.sleep(1); os.kill(os.getpid(), signal.SIGSEGV)'
 
-# OOM kill: el servicio entero muere por falta de memoria
+# OOM kill: the whole service dies out of memory
 systemd-run --user --unit=rg-oom -p MemoryMax=30M -p MemorySwapMax=0 \
   python3 -c 'b=[]
 while True: b.append(bytearray(5<<20))'
 
-# OOM kill de un proceso hijo; el servicio sobrevive
+# OOM kill of a child process; the service survives
 systemd-run --user --unit=rg-oomchild -p MemoryMax=30M -p MemorySwapMax=0 -p OOMPolicy=continue \
   sh -c 'python3 -c "b=[]
 while True: b.append(bytearray(5<<20))"; sleep 300'
 
-# Pico de CPU en todos los núcleos durante 15 s
+# CPU peak on every core for 15 s
 for i in $(seq $(nproc)); do timeout 15 sh -c 'while :; do :; done' & done
 
-# Limpieza
+# Cleanup
 systemctl --user stop rg-crash rg-oomchild; systemctl --user reset-failed
 ```
 
-`stress-ng` (`apt install stress-ng`) es útil para generar presión de memoria y E/S más realista.
+`stress-ng` (`apt install stress-ng`) is useful for more realistic memory and I/O pressure.
 
-## Publicar una versión
+### Translations
 
-1. Añade una entrada al principio de `deploy/package/changelog.yml` con la versión nueva.
-2. Comprueba que los paquetes se generan y pasan `lintian`: `make package` (los deja en `dist/`).
-3. Haz commit, crea la etiqueta y súbela:
+User-facing text is written in English in the code, wrapped in `p.T("…")` (or `i18n.M("…")` for
+text that is translated later), and translated in `internal/i18n/es.go`. `make test` fails if a
+string has no translation or if a translation has different format verbs (`%d`, `%s`…) than its
+source.
+
+## Releasing
+
+1. Add an entry at the top of `deploy/package/changelog.yml` for the new version.
+2. Check that the packages build and pass `lintian`: `make package` (they end up in `dist/`).
+3. Commit, create the tag and push it:
 
    ```bash
    git tag v0.1.0
    git push origin v0.1.0
    ```
 
-4. GitHub Actions compila, empaqueta y crea un **borrador** de release con los paquetes, las sumas
-   SHA-256 y las atestaciones. Revísalo y publícalo desde la página de releases.
+4. GitHub Actions builds, packages and creates a **draft** release with the packages, the SHA-256
+   sums and the attestations. Review it and publish it from the releases page.
 
-## Licencia
+## License
 
 [MIT](LICENSE).

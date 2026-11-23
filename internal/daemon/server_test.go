@@ -15,23 +15,23 @@ import (
 	"github.com/LucasCis92/resguard/internal/ipc"
 )
 
-// startServer levanta un servidor en un socket temporal y devuelve un cliente conectado.
+// startServer starts a server on a temporary socket and returns a connected client.
 func startServer(t *testing.T) (*ipc.Client, string) {
 	t.Helper()
 	sock := filepath.Join(t.TempDir(), "test.sock")
 	srv := NewServer(sock, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	srv.Handle("echo", func(args []string) (string, error) { return strings.Join(args, " "), nil })
-	srv.Handle("fail", func([]string) (string, error) { return "", errors.New("algo salió mal") })
+	srv.Handle("echo", func(c Call) (string, error) { return strings.Join(c.Args, " "), nil })
+	srv.Handle("fail", func(Call) (string, error) { return "", errors.New("something went wrong") })
 	srv.Register(Command{
-		Name: "stats", Usage: "stats [n]", Description: "estadísticas de prueba",
-		Text: func([]string) (string, error) { return "texto", nil },
-		Data: func(args []string) (any, error) {
-			n, err := strconv.Atoi(args[0])
+		Name: "stats", Usage: "stats [n]", Description: "test statistics",
+		Text: func(Call) (string, error) { return "text", nil },
+		Data: func(c Call) (any, error) {
+			n, err := strconv.Atoi(c.Args[0])
 			return map[string]int{"n": n}, err
 		},
 	})
-	srv.Register(Command{Name: "interna", Hidden: true,
-		Data: func([]string) (any, error) { return map[string]int{}, nil }})
+	srv.Register(Command{Name: "internal", Hidden: true,
+		Data: func(Call) (any, error) { return map[string]int{}, nil }})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -39,7 +39,7 @@ func startServer(t *testing.T) (*ipc.Client, string) {
 	t.Cleanup(func() {
 		cancel()
 		if err := <-done; err != nil {
-			t.Errorf("Run devolvió error: %v", err)
+			t.Errorf("Run returned an error: %v", err)
 		}
 	})
 
@@ -52,7 +52,7 @@ func startServer(t *testing.T) (*ipc.Client, string) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if err != nil {
-		t.Fatalf("no se pudo conectar: %v", err)
+		t.Fatalf("could not connect: %v", err)
 	}
 	t.Cleanup(func() { client.Close() })
 	return client, sock
@@ -61,20 +61,20 @@ func startServer(t *testing.T) (*ipc.Client, string) {
 func TestServerRoundTrip(t *testing.T) {
 	c, sock := startServer(t)
 
-	// Varias órdenes por la misma conexión.
+	// Several commands over the same connection.
 	resp, err := c.Call("echo", "hola", "mundo")
 	if err != nil || !resp.OK || resp.Output != "hola mundo" {
 		t.Fatalf("echo: %+v, %v", resp, err)
 	}
 
 	resp, err = c.Call("fail")
-	if err != nil || resp.OK || resp.Error != "algo salió mal" {
+	if err != nil || resp.OK || resp.Error != "something went wrong" {
 		t.Fatalf("fail: %+v, %v", resp, err)
 	}
 
-	resp, err = c.Call("noexiste")
-	if err != nil || resp.OK || !strings.Contains(resp.Error, "desconocida") {
-		t.Fatalf("orden desconocida: %+v, %v", resp, err)
+	resp, err = c.Call("nonexistent")
+	if err != nil || resp.OK || !strings.Contains(resp.Error, "unknown command") {
+		t.Fatalf("unknown command: %+v, %v", resp, err)
 	}
 
 	resp, err = c.Call("help")
@@ -83,28 +83,28 @@ func TestServerRoundTrip(t *testing.T) {
 	}
 	var infos []ipc.CommandInfo
 	if err := resp.Decode(&infos); err != nil {
-		t.Fatalf("help sin datos: %v", err)
+		t.Fatalf("help without data: %v", err)
 	}
 	var names []string
 	for _, in := range infos {
 		names = append(names, in.Name)
 	}
 	if got := strings.Join(names, ","); got != "echo,fail,help,stats" {
-		t.Errorf("órdenes en help = %s (la oculta no debe aparecer)", got)
+		t.Errorf("commands in help = %s (the hidden one must not show up)", got)
 	}
-	if !strings.Contains(resp.Output, "stats [n]") || !strings.Contains(resp.Output, "estadísticas de prueba") {
-		t.Errorf("la ayuda no muestra uso y descripción:\n%s", resp.Output)
+	if !strings.Contains(resp.Output, "stats [n]") || !strings.Contains(resp.Output, "test statistics") {
+		t.Errorf("help does not show usage and description:\n%s", resp.Output)
 	}
 
 	resp, err = c.Call("stats", "3")
 	var got map[string]int
-	if err != nil || !resp.OK || resp.Output != "texto" || resp.Decode(&got) != nil || got["n"] != 3 {
-		t.Fatalf("orden con texto y datos: %+v, %v, %v", resp, err, got)
+	if err != nil || !resp.OK || resp.Output != "text" || resp.Decode(&got) != nil || got["n"] != 3 {
+		t.Fatalf("command with text and data: %+v, %v, %v", resp, err, got)
 	}
 
-	resp, err = c.Call("interna")
+	resp, err = c.Call("internal")
 	if err != nil || !resp.OK || resp.Decode(&got) != nil {
-		t.Fatalf("una orden oculta debe poder llamarse: %+v, %v", resp, err)
+		t.Fatalf("a hidden command must be callable: %+v, %v", resp, err)
 	}
 
 	fi, err := os.Stat(sock)
@@ -112,7 +112,7 @@ func TestServerRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if perm := fi.Mode().Perm(); perm != 0o660 {
-		t.Errorf("permisos del socket = %o, quiero 660", perm)
+		t.Errorf("socket permissions = %o, want 660", perm)
 	}
 }
 
@@ -140,22 +140,22 @@ func TestServerReplacesStaleSocket(t *testing.T) {
 		t.Fatal(runErr)
 	}
 	if err != nil {
-		t.Fatalf("no reemplazó el socket huérfano: %v", err)
+		t.Fatalf("the stale socket was not replaced: %v", err)
 	}
 }
 
 func TestServerUnknownGroup(t *testing.T) {
 	srv := NewServer(filepath.Join(t.TempDir(), "g.sock"), slog.New(slog.NewTextHandler(io.Discard, nil)))
-	srv.SetSocketGroup("grupo-que-no-existe-resguard")
+	srv.SetSocketGroup("resguard-missing-group")
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := srv.Run(ctx); err == nil {
-		t.Fatal("un grupo inexistente debería impedir arrancar")
+		t.Fatal("a missing group should prevent startup")
 	}
 }
 
-// Una segunda copia no debe quitarle el socket a un demonio que funciona:
-// al cerrarse lo borraría y el primero quedaría inaccesible.
+// A second copy must not take the socket from a running daemon: on exit it
+// would delete it and the first one would become unreachable.
 func TestServerRefusesSecondInstance(t *testing.T) {
 	c, sock := startServer(t)
 
@@ -163,17 +163,35 @@ func TestServerRefusesSecondInstance(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	err := second.Run(ctx)
-	if err == nil || !strings.Contains(err.Error(), "ya hay un resguardd") {
-		t.Fatalf("la segunda copia debería negarse a arrancar: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "already running") {
+		t.Fatalf("the second copy should refuse to start: %v", err)
 	}
 
-	// El primero sigue accesible por el mismo socket.
+	// The first one is still reachable through the same socket.
 	if resp, err := c.Call("echo", "sigo"); err != nil || resp.Output != "sigo" {
-		t.Fatalf("el primer demonio dejó de responder: %+v, %v", resp, err)
+		t.Fatalf("the first daemon stopped answering: %+v, %v", resp, err)
 	}
 	c2, err := ipc.Dial(sock)
 	if err != nil {
-		t.Fatalf("el socket del primer demonio desapareció: %v", err)
+		t.Fatalf("the first daemon's socket disappeared: %v", err)
 	}
 	c2.Close()
+}
+
+// The daemon answers in the language each request asks for.
+func TestServerAnswersInTheCallersLanguage(t *testing.T) {
+	c, _ := startServer(t)
+	c.Lang = "es"
+	resp, err := c.Call("nonexistent")
+	if err != nil || !strings.Contains(resp.Error, "orden desconocida") {
+		t.Errorf("Spanish error = %+v, %v", resp, err)
+	}
+	resp, _ = c.Call("help")
+	if !strings.HasPrefix(resp.Output, "Órdenes del demonio:") || !strings.Contains(resp.Output, "muestra esta ayuda") {
+		t.Errorf("Spanish help:\n%s", resp.Output)
+	}
+	c.Lang = "en"
+	if resp, _ = c.Call("help"); !strings.HasPrefix(resp.Output, "Daemon commands:") {
+		t.Errorf("English help:\n%s", resp.Output)
+	}
 }

@@ -1,5 +1,5 @@
-// Package units vigila las unidades de systemd por D-Bus y registra cuándo
-// un servicio falla o es reiniciado automáticamente tras un fallo.
+// Package units watches systemd units over D-Bus and records when a service
+// fails or is automatically restarted after a failure.
 package units
 
 import (
@@ -15,36 +15,36 @@ import (
 	"github.com/LucasCis92/resguard/internal/events"
 )
 
-// Bus indica a qué instancia de systemd conectarse.
+// Bus selects the systemd instance to connect to.
 type Bus string
 
 const (
-	SystemBus Bus = "system" // servicios del sistema (producción)
-	UserBus   Bus = "user"   // servicios del usuario (desarrollo, systemd-run --user)
+	SystemBus Bus = "system" // system services (production)
+	UserBus   Bus = "user"   // the user's services (development, systemd-run --user)
 )
 
-// Watcher escucha los cambios de estado de los servicios.
+// Watcher listens for service state changes.
 type Watcher struct {
 	bus     Bus
 	store   *events.Store
 	log     *slog.Logger
-	context func() *events.Context // estado del sistema para adjuntar a los eventos
-	ignored func(unit string) bool // servicios excluidos de las incidencias
+	context func() *events.Context // system state to attach to events
+	ignored func(unit string) bool // units excluded from incidents
 
-	state    map[string]unitState // último estado visto por unidad
-	reported map[string]string    // última InvocationID notificada por unidad
+	state    map[string]unitState // last state seen per unit
+	reported map[string]string    // last reported InvocationID per unit
 }
 
 type unitState struct{ active, sub string }
 
-// NewWatcher crea un vigilante. contextFn e ignored pueden ser nil. ignored se
-// consulta en cada caída, así que puede reflejar una configuración que cambia.
+// NewWatcher creates a watcher. contextFn and ignored may be nil. ignored is
+// called on every failure, so it can reflect a configuration that changes.
 func NewWatcher(bus Bus, store *events.Store, log *slog.Logger, contextFn func() *events.Context, ignored func(string) bool) *Watcher {
 	return &Watcher{bus: bus, store: store, log: log, context: contextFn, ignored: ignored,
 		state: map[string]unitState{}, reported: map[string]string{}}
 }
 
-// Run vigila hasta que ctx se cancela, reconectando si se pierde la conexión.
+// Run watches until ctx is canceled, reconnecting if the connection is lost.
 func (w *Watcher) Run(ctx context.Context) {
 	backoff := time.Second
 	for {
@@ -52,7 +52,7 @@ func (w *Watcher) Run(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		w.log.Warn("vigilancia de systemd interrumpida; reintentando", "bus", w.bus, "err", err, "en", backoff)
+		w.log.Warn("systemd watch interrupted; retrying", "bus", w.bus, "err", err, "in", backoff)
 		select {
 		case <-ctx.Done():
 			return
@@ -74,7 +74,7 @@ func (w *Watcher) connect(ctx context.Context) (*sd.Conn, error) {
 func (w *Watcher) watch(ctx context.Context) error {
 	conn, err := w.connect(ctx)
 	if err != nil {
-		return fmt.Errorf("conectando con systemd: %w", err)
+		return fmt.Errorf("connecting to systemd: %w", err)
 	}
 	defer conn.Close()
 
@@ -82,23 +82,23 @@ func (w *Watcher) watch(ctx context.Context) error {
 	errs := make(chan error, 16)
 	conn.SetPropertiesSubscriber(updates, errs)
 	if err := conn.Subscribe(); err != nil {
-		return fmt.Errorf("suscribiéndose a systemd: %w", err)
+		return fmt.Errorf("subscribing to systemd: %w", err)
 	}
 
-	// Estado inicial: los servicios que ya estaban caídos no son incidencias nuevas.
+	// Initial state: services that were already down are not new incidents.
 	units, err := conn.ListUnitsContext(ctx)
 	if err != nil {
-		return fmt.Errorf("listando unidades: %w", err)
+		return fmt.Errorf("listing units: %w", err)
 	}
 	for _, u := range units {
 		if strings.HasSuffix(u.Name, ".service") {
 			w.state[u.Name] = unitState{u.ActiveState, u.SubState}
 		}
 	}
-	w.log.Info("vigilando servicios de systemd", "bus", w.bus, "servicios", len(w.state))
+	w.log.Info("watching systemd services", "bus", w.bus, "services", len(w.state))
 
-	// Si la conexión se cae, go-systemd cierra el canal interno pero no el
-	// nuestro; comprobamos periódicamente que siga viva.
+	// If the connection drops, go-systemd closes its internal channel but not
+	// ours, so check periodically that it is still alive.
 	alive := time.NewTicker(30 * time.Second)
 	defer alive.Stop()
 
@@ -107,10 +107,10 @@ func (w *Watcher) watch(ctx context.Context) error {
 		case <-ctx.Done():
 			return nil
 		case err := <-errs:
-			w.log.Warn("error en la suscripción a systemd", "err", err)
+			w.log.Warn("systemd subscription error", "err", err)
 		case <-alive.C:
 			if !conn.Connected() {
-				return fmt.Errorf("conexión con D-Bus perdida")
+				return fmt.Errorf("D-Bus connection lost")
 			}
 		case u := <-updates:
 			w.handle(ctx, conn, u)
@@ -135,8 +135,8 @@ func (w *Watcher) handle(ctx context.Context, conn *sd.Conn, u *sd.PropertiesUpd
 		return
 	}
 
-	// Según la versión de systemd, una caída con Restart= pasa por "failed",
-	// por "auto-restart" o por ambos; report evita duplicados por InvocationID.
+	// Depending on the systemd version, a failure with Restart= goes through
+	// "failed", "auto-restart" or both; report avoids duplicates by InvocationID.
 	if (cur.sub == "auto-restart" && prev.sub != "auto-restart") ||
 		(cur.active == "failed" && prev.active != "failed") {
 		if w.ignored != nil && w.ignored(u.UnitName) {
@@ -146,8 +146,8 @@ func (w *Watcher) handle(ctx context.Context, conn *sd.Conn, u *sd.PropertiesUpd
 	}
 }
 
-// report consulta por qué terminó el servicio y registra la incidencia,
-// una sola vez por ejecución (InvocationID) del servicio.
+// report asks systemd why the service ended and records the incident, once
+// per run (InvocationID) of the service.
 func (w *Watcher) report(ctx context.Context, conn *sd.Conn, unit string) {
 	qctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -164,72 +164,43 @@ func (w *Watcher) report(ctx context.Context, conn *sd.Conn, unit string) {
 
 	props, err := conn.GetUnitTypePropertiesContext(qctx, unit, "Service")
 	if err != nil {
-		w.log.Warn("consultando propiedades del servicio", "service", unit, "err", err)
+		w.log.Warn("querying service properties", "service", unit, "err", err)
 		props = map[string]interface{}{}
 	}
 
-	result, _ := props["Result"].(string)
-	msg := fmt.Sprintf("%s se cayó (%s)", unit, describe(result, props))
-	if restart, _ := props["Restart"].(string); restart != "" && restart != "no" {
-		msg += fmt.Sprintf("; Restart=%s", restart)
-		if n, ok := props["NRestarts"].(uint32); ok {
-			msg += fmt.Sprintf(", reinicios previos: %d", n)
-		}
-	}
-
-	e := events.Event{
-		Kind:     events.ServiceFailed,
-		Severity: events.Critical,
-		Service:  unit,
-		Message:  msg,
-	}
+	e := failureEvent(unit, props)
 	if w.context != nil {
 		e.Context = w.context()
 	}
 	w.store.Add(e)
 }
 
-// describe traduce el resultado de systemd a un texto legible.
-func describe(result string, props map[string]interface{}) string {
+// failureEvent builds the incident from the service's D-Bus properties.
+func failureEvent(unit string, props map[string]interface{}) events.Event {
+	result, _ := props["Result"].(string)
 	code, _ := props["ExecMainCode"].(int32)
 	status, _ := props["ExecMainStatus"].(int32)
-
-	switch result {
-	case "oom-kill":
-		return "sin memoria: lo mató el OOM killer"
-	case "exit-code":
-		return fmt.Sprintf("terminó con código %d", status)
-	case "signal", "core-dump":
-		s := fmt.Sprintf("recibió la señal %s", signalName(status))
-		if result == "core-dump" {
-			s += " y generó un volcado de memoria"
+	if result == "" {
+		// No properties (e.g. the query failed): use the exit code if there is one.
+		result = "unknown"
+		if code == 1 { // CLD_EXITED
+			result = "exit-code"
 		}
-		return s
-	case "timeout":
-		return "superó el tiempo de espera"
-	case "watchdog":
-		return "el watchdog dejó de recibir latidos"
-	case "start-limit-hit":
-		return "superó el límite de reinicios"
-	case "resources":
-		return "no se pudieron reservar los recursos necesarios"
-	case "":
-		// Sin propiedades (p. ej. la consulta falló): usamos el código de salida si lo hay.
-		if code == 1 {
-			return fmt.Sprintf("terminó con código %d", status)
+	}
+	e := events.Event{
+		Kind:       events.ServiceFailed,
+		Severity:   events.Critical,
+		Service:    unit,
+		Reason:     result,
+		ExitStatus: int(status),
+	}
+	if restart, _ := props["Restart"].(string); restart != "" && restart != "no" {
+		e.Restart = restart
+		if n, ok := props["NRestarts"].(uint32); ok {
+			e.Restarts = int(n)
 		}
-		return "motivo desconocido"
-	default:
-		return result
 	}
-}
-
-func signalName(n int32) string {
-	names := map[int32]string{1: "SIGHUP", 2: "SIGINT", 3: "SIGQUIT", 6: "SIGABRT", 9: "SIGKILL", 11: "SIGSEGV", 15: "SIGTERM"}
-	if s, ok := names[n]; ok {
-		return s
-	}
-	return fmt.Sprintf("%d", n)
+	return e
 }
 
 func variantString(v godbus.Variant) string {

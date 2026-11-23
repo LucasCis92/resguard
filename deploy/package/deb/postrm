@@ -1,7 +1,7 @@
 #!/bin/sh
-# postrm del paquete .deb (patrón de dh_installsystemd).
-#   remove: se conservan la configuración y el registro de incidencias.
-#   purge:  se borra todo.
+# postrm of the .deb package (dh_installsystemd pattern).
+#   remove: the configuration and the incident log are kept.
+#   purge:  everything is deleted.
 set -e
 
 if [ "$1" = remove ] && [ -d /run/systemd/system ]; then

@@ -1,5 +1,5 @@
-# Configuración de GoReleaser: compila, empaqueta (.deb, .rpm, .tar.gz) y
-# publica las versiones. Prueba local sin publicar: make package
+# GoReleaser configuration: builds, packages (.deb, .rpm, .tar.gz) and
+# publishes releases. Local dry run without publishing: make package
 version: 2
 
 project_name: resguard
@@ -8,10 +8,12 @@ before:
   hooks:
     - go mod tidy -diff
     - go test ./...
-    # Páginas de manual comprimidas, como exige Debian (gzip -n: sin fecha, reproducible).
-    - mkdir -p build/man
+    # Compressed man pages, as Debian requires (gzip -n: no timestamp, reproducible).
+    - mkdir -p build/man/es
     - sh -c "gzip -9nc deploy/man/resguardctl.1 > build/man/resguardctl.1.gz"
     - sh -c "gzip -9nc deploy/man/resguardd.8 > build/man/resguardd.8.gz"
+    - sh -c "gzip -9nc deploy/man/es/resguardctl.1 > build/man/es/resguardctl.1.gz"
+    - sh -c "gzip -9nc deploy/man/es/resguardd.8 > build/man/es/resguardd.8.gz"
 
 builds:
   - id: resguardd
@@ -23,7 +25,7 @@ builds:
     flags: [-trimpath]
     ldflags:
       - -s -w -X github.com/LucasCis92/resguard/internal/version.Version=v{{ .Version }}
-    # Compilación reproducible: misma fuente, mismo binario.
+    # Reproducible build: same source, same binary.
     mod_timestamp: "{{ .CommitTimestamp }}"
   - id: resguardctl
     main: ./cmd/resguardctl
@@ -42,6 +44,7 @@ archives:
     files:
       - LICENSE
       - README.md
+      - README.es.md
       - src: deploy/systemd/resguard.service
         dst: deploy/systemd/resguard.service
       - src: deploy/sysusers.d/resguard.conf
@@ -54,8 +57,8 @@ archives:
 nfpms:
   - id: paquetes
     package_name: resguard
-    # Revisión del empaquetado (0.1.0-1): se incrementa si cambia el paquete
-    # sin cambiar el programa.
+    # Packaging revision (0.1.0-1): bump it when the package changes but the
+    # program does not.
     release: "1"
     file_name_template: "{{ .ConventionalFileName }}"
     vendor: LucasCis92
@@ -63,11 +66,12 @@ nfpms:
     homepage: https://github.com/LucasCis92/resguard
     license: MIT
     description: |-
-      Monitor de recursos y registro de incidencias para servicios Linux.
-      resguard vigila CPU, memoria, swap, presión (PSI) y el consumo de cada
-      servicio, aplicación y contenedor; registra picos, OOM kills y caídas de
-      servicios con el contexto del sistema en ese momento, y ofrece una CLI
-      interactiva (resguardctl) con vista en vivo.
+      Resource monitor and incident recorder for Linux services.
+      resguard monitors CPU, memory, swap, pressure (PSI) and the usage of every
+      service, application and container; it records resource peaks, OOM kills
+      and service failures together with the system state at that moment, and
+      offers an interactive CLI (resguardctl) with a live view. The interface is
+      available in English and Spanish.
     section: admin
     priority: optional
     formats: [deb, rpm]
@@ -81,7 +85,7 @@ nfpms:
       - src: deploy/sysusers.d/resguard.conf
         dst: /usr/lib/sysusers.d/resguard.conf
         file_info: {mode: 0644}
-      # Configuración del administrador: las actualizaciones nunca la pisan.
+      # The administrator's configuration: upgrades never overwrite it.
       - src: deploy/config.yaml
         dst: /etc/resguard/config.yaml
         type: config|noreplace
@@ -97,18 +101,27 @@ nfpms:
       - src: README.md
         dst: /usr/share/doc/resguard/README.md
         file_info: {mode: 0644}
+      - src: README.es.md
+        dst: /usr/share/doc/resguard/README.es.md
+        file_info: {mode: 0644}
       - src: build/man/resguardctl.1.gz
         dst: /usr/share/man/man1/resguardctl.1.gz
         file_info: {mode: 0644}
       - src: build/man/resguardd.8.gz
         dst: /usr/share/man/man8/resguardd.8.gz
         file_info: {mode: 0644}
+      - src: build/man/es/resguardctl.1.gz
+        dst: /usr/share/man/es/man1/resguardctl.1.gz
+        file_info: {mode: 0644}
+      - src: build/man/es/resguardd.8.gz
+        dst: /usr/share/man/es/man8/resguardd.8.gz
+        file_info: {mode: 0644}
       - src: deploy/package/deb/lintian-overrides
         dst: /usr/share/lintian/overrides/resguard
         file_info: {mode: 0644}
         packager: deb
     changelog: deploy/package/changelog.yml
-    # Debian y Fedora gestionan los servicios con herramientas distintas.
+    # Debian and Fedora manage services with different tools.
     overrides:
       deb:
         scripts:
@@ -136,16 +149,18 @@ changelog:
 release:
   draft: true
   footer: |
-    ## Instalación
+    ## Installation
 
     Ubuntu / Debian:
 
-        sudo apt install ./resguard_{{ .Version }}_amd64.deb
+        sudo apt install ./resguard_{{ .Version }}-1_amd64.deb
 
     Fedora / RHEL:
 
         sudo dnf install ./resguard-{{ .Version }}-1.x86_64.rpm
 
-    Verificar que el paquete fue generado por este repositorio:
+    Verify that the package was built by this repository:
 
-        gh attestation verify resguard_{{ .Version }}_amd64.deb --repo LucasCis92/resguard
+        gh attestation verify resguard_{{ .Version }}-1_amd64.deb --repo LucasCis92/resguard
+
+    Spanish documentation: [README.es.md](https://github.com/LucasCis92/resguard/blob/v{{ .Version }}/README.es.md)

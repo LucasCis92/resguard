@@ -1,8 +1,8 @@
-// Package config carga y valida el archivo de configuración de resguardd
-// (por defecto /etc/resguard/config.yaml).
+// Package config loads and validates resguardd's configuration file (by
+// default /etc/resguard/config.yaml).
 //
-// Todas las claves son opcionales: lo que no aparece en el archivo toma el
-// valor por defecto, y sin archivo el demonio funciona con los valores por defecto.
+// Every key is optional: whatever the file omits takes its default value, and
+// without a file the daemon runs with the defaults.
 package config
 
 import (
@@ -26,10 +26,10 @@ import (
 	"github.com/LucasCis92/resguard/internal/events"
 )
 
-// DefaultPath es la ubicación por defecto del archivo.
+// DefaultPath is the file's default location.
 const DefaultPath = "/etc/resguard/config.yaml"
 
-// Config es la configuración del demonio.
+// Config is the daemon's configuration.
 type Config struct {
 	Interval   time.Duration     `yaml:"interval"`
 	History    time.Duration     `yaml:"history"`
@@ -37,15 +37,15 @@ type Config struct {
 	Services   Services          `yaml:"services"`
 }
 
-// Services indica qué servicios se vigilan.
+// Services selects which units are monitored.
 type Services struct {
-	// Slices de cgroups donde buscar servicios, aplicaciones y contenedores.
+	// Cgroup slices to scan for services, applications and containers.
 	Slices []string `yaml:"slices"`
-	// Unidades que no generan incidencias. Admite comodines: "snap.*".
+	// Units that never raise incidents. Wildcards are allowed: "snap.*".
 	Ignore []string `yaml:"ignore"`
 }
 
-// Default devuelve la configuración por defecto.
+// Default returns the default configuration.
 func Default() Config {
 	return Config{
 		Interval:   2 * time.Second,
@@ -55,8 +55,8 @@ func Default() Config {
 	}
 }
 
-// Load lee el archivo de path sobre los valores por defecto. Si el archivo no
-// existe y missingOK es true, devuelve los valores por defecto y found=false.
+// Load reads the file at path on top of the defaults. If the file does not
+// exist and missingOK is true, it returns the defaults and found=false.
 func Load(path string, missingOK bool) (cfg Config, found bool, err error) {
 	cfg = Default()
 	f, err := os.Open(path)
@@ -82,29 +82,29 @@ func Load(path string, missingOK bool) (cfg Config, found bool, err error) {
 	return cfg, true, nil
 }
 
-// Parse interpreta el contenido YAML sobre los valores por defecto y lo valida.
+// Parse decodes YAML content on top of the defaults and validates it.
 func Parse(data []byte) (Config, error) {
 	cfg := Default()
 	dec := yaml.NewDecoder(bytes.NewReader(data))
-	dec.KnownFields(true) // una clave mal escrita es un error, no se ignora
+	dec.KnownFields(true) // a misspelled key is an error, not silently ignored
 	if err := dec.Decode(&cfg); err != nil && !errors.Is(err, io.EOF) {
-		return cfg, fmt.Errorf("formato inválido: %w", cleanYAMLError(err))
+		return cfg, fmt.Errorf("invalid format: %w", cleanYAMLError(err))
 	}
 	return cfg, cfg.Validate()
 }
 
-// Validate comprueba que los valores tengan sentido.
+// Validate checks that the values make sense.
 func (c Config) Validate() error {
 	var errs []string
 	bad := func(format string, a ...any) { errs = append(errs, fmt.Sprintf(format, a...)) }
 
 	if c.Interval < 100*time.Millisecond || c.Interval > time.Hour {
-		bad("interval debe estar entre 100ms y 1h (es %s)", c.Interval)
+		bad("interval must be between 100ms and 1h (it is %s)", c.Interval)
 	}
 	if c.History < c.Interval || c.History > 7*24*time.Hour {
-		bad("history debe estar entre interval y 168h (es %s)", c.History)
+		bad("history must be between interval and 168h (it is %s)", c.History)
 	} else if c.Interval > 0 && c.History/c.Interval > 1_000_000 {
-		bad("history/interval da más de 1.000.000 de muestras; aumenta interval o reduce history")
+		bad("history/interval gives more than 1,000,000 samples; increase interval or reduce history")
 	}
 
 	t := c.Thresholds
@@ -113,24 +113,24 @@ func (c Config) Validate() error {
 		v    float64
 	}{{"cpu", t.CPU}, {"memory", t.Memory}, {"psi_cpu", t.PSICPU}, {"psi_memory", t.PSIMemory}, {"psi_io", t.PSIIO}} {
 		if th.v < 0 || th.v > 100 {
-			bad("thresholds.%s debe estar entre 0 (desactivado) y 100 (es %g)", th.name, th.v)
+			bad("thresholds.%s must be between 0 (disabled) and 100 (it is %g)", th.name, th.v)
 		}
 	}
 	if t.Sustain < 1 || t.Sustain > 1000 {
-		bad("thresholds.sustain debe estar entre 1 y 1000 (es %d)", t.Sustain)
+		bad("thresholds.sustain must be between 1 and 1000 (it is %d)", t.Sustain)
 	}
 
 	if len(c.Services.Slices) == 0 {
-		bad("services.slices no puede estar vacío")
+		bad("services.slices cannot be empty")
 	}
 	for _, s := range c.Services.Slices {
 		if s == "" || filepath.IsAbs(s) || strings.Contains(s, "..") || !strings.HasSuffix(s, ".slice") && !strings.HasSuffix(s, ".service") {
-			bad("services.slices: %q no es una ruta de cgroup válida (p. ej. system.slice)", s)
+			bad("services.slices: %q is not a valid cgroup path (e.g. system.slice)", s)
 		}
 	}
 	for _, p := range c.Services.Ignore {
 		if _, err := path.Match(p, ""); err != nil || p == "" {
-			bad("services.ignore: patrón inválido %q", p)
+			bad("services.ignore: invalid pattern %q", p)
 		}
 	}
 
@@ -140,7 +140,7 @@ func (c Config) Validate() error {
 	return nil
 }
 
-// Ignored indica si un servicio está excluido de las incidencias.
+// Ignored reports whether a unit is excluded from incidents.
 func (c Config) Ignored(service string) bool {
 	for _, p := range c.Services.Ignore {
 		if ok, _ := path.Match(p, service); ok {
@@ -150,8 +150,8 @@ func (c Config) Ignored(service string) bool {
 	return false
 }
 
-// YAML devuelve la configuración en formato YAML, con duraciones legibles
-// ("1h" en vez de "1h0m0s").
+// YAML returns the configuration as YAML, with readable durations ("1h"
+// instead of "1h0m0s").
 func (c Config) YAML() string {
 	out := struct {
 		Interval   string            `yaml:"interval"`
@@ -179,16 +179,16 @@ func formatDuration(d time.Duration) string {
 	return s
 }
 
-// checkPermissions rechaza el archivo si alguien que no sea su propietario
-// (root o el usuario del demonio) puede modificarlo: podría, por ejemplo,
-// desactivar todas las alertas. Es la misma comprobación que hace sshd.
+// checkPermissions rejects the file if anyone other than its owner (root or
+// the daemon's user) can modify it: they could, for example, disable every
+// alert. sshd performs the same check.
 func checkPermissions(f *os.File, path string) error {
 	fi, err := f.Stat()
 	if err != nil {
 		return err
 	}
 	if !fi.Mode().IsRegular() {
-		return fmt.Errorf("%s no es un archivo normal", path)
+		return fmt.Errorf("%s is not a regular file", path)
 	}
 	if err := checkOwnerAndMode(fi, path); err != nil {
 		return err
@@ -207,26 +207,26 @@ func checkOwnerAndMode(fi os.FileInfo, name string) error {
 		return nil
 	}
 	if uid := uint32(os.Getuid()); st.Uid != 0 && st.Uid != uid {
-		return fmt.Errorf("%s pertenece a otro usuario (uid %d); debe pertenecer a root", name, st.Uid)
+		return fmt.Errorf("%s belongs to another user (uid %d); it must belong to root", name, st.Uid)
 	}
 	perm := fi.Mode().Perm()
 	if fi.IsDir() && fi.Mode()&os.ModeSticky != 0 {
-		return nil // como /tmp: otros pueden crear archivos, pero no modificar los ajenos
+		return nil // like /tmp: others can create files but not modify someone else's
 	}
 	insecure := perm&0o002 != 0
-	// Escribir por el grupo solo es aceptable si es el grupo propio del dueño
-	// (root:root, o el grupo personal que crean Debian y Ubuntu para cada usuario).
+	// Group write access is only acceptable for the owner's own group
+	// (root:root, or the personal group Debian and Ubuntu create per user).
 	if perm&0o020 != 0 && st.Gid != primaryGID(st.Uid) {
 		insecure = true
 	}
 	if insecure {
-		return fmt.Errorf("%s puede ser modificado por otros usuarios (permisos %04o); corrígelo con: sudo chmod go-w %s", name, perm, name)
+		return fmt.Errorf("%s can be modified by other users (mode %04o); fix it with: sudo chmod go-w %s", name, perm, name)
 	}
 	return nil
 }
 
-// primaryGID devuelve el grupo principal de un usuario, o un valor imposible
-// si no se puede averiguar (así el archivo se considera inseguro).
+// primaryGID returns a user's primary group, or an impossible value if it
+// cannot be found out (so the file is treated as insecure).
 func primaryGID(uid uint32) uint32 {
 	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
 	if err != nil {
@@ -245,15 +245,14 @@ var yamlErrorRewrites = []struct {
 }{
 	{regexp.MustCompile(`yaml: `), ""},
 	{regexp.MustCompile(`unmarshal errors:\n\s*`), ""},
-	{regexp.MustCompile(`field (\S+) not found in type \S+`), `clave desconocida "$1" (¿está bien escrita?)`},
-	{regexp.MustCompile("cannot unmarshal !!\\w+ `([^`]*)` into (float64|int)"), `"$1" no es un número`},
-	{regexp.MustCompile("cannot unmarshal !!\\w+ `([^`]*)` into time.Duration"), `"$1" no es una duración (ejemplos: 500ms, 2s, 1m, 1h)`},
-	{regexp.MustCompile("cannot unmarshal !!\\w+ `([^`]*)` into \\[\\]string"), `"$1" debería ser una lista, por ejemplo [a, b]`},
-	{regexp.MustCompile(`line (\d+)`), "línea $1"},
+	{regexp.MustCompile(`field (\S+) not found in type \S+`), `unknown key "$1" (is it spelled correctly?)`},
+	{regexp.MustCompile("cannot unmarshal !!\\w+ `([^`]*)` into (float64|int)"), `"$1" is not a number`},
+	{regexp.MustCompile("cannot unmarshal !!\\w+ `([^`]*)` into time.Duration"), `"$1" is not a duration (examples: 500ms, 2s, 1m, 1h)`},
+	{regexp.MustCompile("cannot unmarshal !!\\w+ `([^`]*)` into \\[\\]string"), `"$1" should be a list, for example [a, b]`},
 }
 
-// cleanYAMLError traduce los errores de la librería YAML a mensajes que no
-// mencionen tipos internos de Go.
+// cleanYAMLError rewrites the YAML library's errors into messages that don't
+// mention Go's internal types.
 func cleanYAMLError(err error) error {
 	msg := err.Error()
 	for _, r := range yamlErrorRewrites {

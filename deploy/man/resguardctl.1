@@ -1,97 +1,107 @@
-.TH RESGUARDCTL 1 "noviembre de 2026" "resguard" "Órdenes de usuario"
-.SH NOMBRE
-resguardctl \- consulta el monitor de recursos resguard
-.SH SINOPSIS
+.TH RESGUARDCTL 1 "November 2026" "resguard" "User Commands"
+.SH NAME
+resguardctl \- query the resguard resource monitor
+.SH SYNOPSIS
 .B resguardctl
 .RB [ \-socket
-.IR ruta ]
-.RI [ orden " [" argumentos ...]]
-.SH DESCRIPCIÓN
+.IR path ]
+.RI [ command " [" arguments ...]]
+.SH DESCRIPTION
 .B resguardctl
-se comunica con el demonio
+talks to the
 .BR resguardd (8)
-para mostrar el estado del sistema, el consumo de cada servicio, aplicación y
-contenedor, y las incidencias registradas (picos de recursos, OOM kills y caídas
-de servicios).
+daemon to show the system state, the resource usage of every service,
+application and container, and the recorded incidents (resource peaks, OOM
+kills and service failures).
 .PP
-Sin
-.I orden
-abre una sesión interactiva con historial (flechas arriba y abajo) y
-autocompletado (Tab). Con una
-.I orden
-la ejecuta y termina.
+Without a
+.I command
+it opens an interactive session with history (up and down arrows) and
+completion (Tab). With a
+.I command
+it runs it and exits.
 .PP
-Para usarlo sin
+To use it without
 .BR sudo ,
-el usuario debe pertenecer al grupo
-.BR resguard :
+the user must belong to the
+.B resguard
+group:
 .B sudo usermod \-aG resguard $USER
-y volver a iniciar sesión.
-.SH ÓRDENES
+and log in again.
+.SH COMMANDS
 .TP
 .B status
-Resumen: CPU, memoria, swap, carga, presión (PSI) e incidencias de la última hora.
+Summary: CPU, memory, swap, load, pressure (PSI) and incidents in the last hour.
 .TP
-.BR watch " [" \fIsegundos\fR ]
-Vista en vivo a pantalla completa. Teclas: flechas para elegir una fila,
+.BR watch " [" \fIseconds\fR ]
+Full-screen live view. Keys: arrows to select a row,
 .B Enter
-para ver sus procesos,
+to see its processes,
 .BR a / s / d / t
-para mostrar solo aplicaciones, servicios, contenedores o todo,
+to show only applications, services, containers or everything,
 .BR c / m
-para ordenar por CPU o memoria,
+to sort by CPU or memory,
 .B Esc
-para volver y
+to go back and
 .B q
-para salir.
+to quit.
 .TP
-.BR services " [" cpu | mem "] [" apps | servicios | contenedores | sesiones "] [" \fIn\fR ]
-Lo que más consume, con su tipo, límite de memoria y OOM kills.
+.BR services " [" cpu | mem "] [" apps | services | containers | sessions "] [" \fIn\fR ]
+What uses the most resources, with its kind, memory limit and OOM kills.
 .TP
 .BR history " [" \fIn\fR ]
-Las últimas \fIn\fR muestras (20 por defecto).
+The last \fIn\fR samples (20 by default).
 .TP
 .BR events " [" \fIn\fR ]
-Las últimas \fIn\fR incidencias (20 por defecto).
+The last \fIn\fR incidents (20 by default).
 .TP
 .BI event " id"
-Detalle de una incidencia, con el estado del sistema y lo que más consumía.
+Details of an incident, with the system state and what used the most resources.
 .TP
-.BR logs " [" \fIn\fR "] [" avisos "] [" seguir ]
-Logs del servicio desde el journal: las últimas \fIn\fR líneas, solo avisos y
-errores, o en vivo (Ctrl+C vuelve).
+.BR logs " [" \fIn\fR "] [" warnings "] [" follow ]
+Service logs from the journal: the last \fIn\fR lines, warnings and errors
+only, or live (Ctrl+C goes back). The daemon's logs are always in English.
 .TP
 .B config
-Configuración en uso y archivo del que se cargó.
+Configuration in use and the file it was loaded from.
 .TP
 .BR ping ", " version ", " help
-Utilidades.
-.SH OPCIONES
+Utilities.
+.SH OPTIONS
 .TP
-.BI \-socket " ruta"
-Socket del demonio (por defecto
+.BI \-socket " path"
+Daemon socket (default
 .IR /run/resguard/resguard.sock ).
-.SH ENTORNO
+.SH ENVIRONMENT
+.TP
+.B RESGUARD_LANG
+CLI language:
+.B en
+or
+.BR es .
+When unset, the system language is used
+.RB ( LANG ", " LC_MESSAGES ", " LANGUAGE );
+any language other than Spanish falls back to English.
 .TP
 .B NO_COLOR
-Si está definida, la salida no usa colores.
+When set, output uses no colors.
 .TP
 .B XDG_STATE_HOME
-Directorio del historial de órdenes (por defecto
+Directory of the command history (default
 .IR ~/.local/state ).
-.SH ARCHIVOS
+.SH FILES
 .TP
 .I ~/.local/state/resguard/history
-Historial del modo interactivo (solo legible por el usuario). Las líneas que
-empiezan por un espacio no se guardan.
-.SH EJEMPLOS
+Interactive mode history (readable only by the user). Lines starting with a
+space are not saved.
+.SH EXAMPLES
 .TP
 .B resguardctl services apps mem
-Aplicaciones que más memoria usan.
+Applications using the most memory.
 .TP
-.B resguardctl logs avisos seguir
-Picos, OOM kills y caídas a medida que ocurren.
-.SH VÉASE TAMBIÉN
+.B resguardctl logs warnings follow
+Peaks, OOM kills and failures as they happen.
+.SH SEE ALSO
 .BR resguardd (8),
 .BR journalctl (1),
 .BR systemctl (1)

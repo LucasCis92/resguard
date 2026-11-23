@@ -1,25 +1,25 @@
 [Unit]
-Description=Monitor y gestor dinámico de recursos de servicios
+Description=Resource monitor and incident recorder for services
 Documentation=https://github.com/LucasCis92/resguard
 After=dbus.service
 
 [Service]
 Type=simple
-# Umbrales, intervalos y servicios vigilados: /etc/resguard/config.yaml.
+# Thresholds, intervals and monitored units: /etc/resguard/config.yaml.
 ExecStart=/usr/bin/resguardd -group resguard -events-file /var/lib/resguard/events.jsonl
-# "systemctl reload resguard" relee la configuración sin reiniciar.
+# "systemctl reload resguard" rereads the configuration without restarting.
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
 
-# /run/resguard para el socket (accesible para el grupo resguard por los
-# permisos del propio socket) y /var/lib/resguard para el registro de incidencias.
+# /run/resguard for the socket (reachable by the resguard group through the
+# socket's own permissions) and /var/lib/resguard for the incident log.
 RuntimeDirectory=resguard
 RuntimeDirectoryMode=0755
 StateDirectory=resguard
 StateDirectoryMode=0750
 
-# Endurecimiento: el demonio solo lee /proc y /sys y habla por sockets Unix.
+# Hardening: the daemon only reads /proc and /sys and talks over Unix sockets.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes

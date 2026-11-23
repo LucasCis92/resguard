@@ -1,5 +1,5 @@
-# Registro de cambios del paquete (formato chglog, lo usa nfpm para generar
-# el changelog de Debian). Añade una entrada al principio en cada versión.
+# Package changelog (chglog format; nfpm turns it into the Debian changelog).
+# Add an entry at the top for every release.
 - semver: 0.1.0
   date: 2026-11-23T00:00:00Z
   packager: LucasCis92 <151865990+LucasCis92@users.noreply.github.com>
@@ -7,9 +7,10 @@
     urgency: medium
     distributions: [stable]
   changes:
-    - note: Primera versión publicada.
-    - note: Monitorización de CPU, memoria, swap, carga y PSI, con historial en memoria.
-    - note: Consumo por servicio, aplicación de escritorio y contenedor (cgroups v2).
-    - note: Registro de picos, OOM kills y caídas de servicios.
-    - note: CLI interactiva con vista en vivo y procesos por aplicación.
-    - note: Configuración en /etc/resguard/config.yaml con recarga en caliente.
+    - note: First public release.
+    - note: Monitoring of CPU, memory, swap, load and PSI, with in-memory history.
+    - note: Usage per service, desktop application and container (cgroups v2).
+    - note: Recording of resource peaks, OOM kills and service failures.
+    - note: Interactive CLI with a live view and per-application processes.
+    - note: Configuration in /etc/resguard/config.yaml with live reload.
+    - note: English and Spanish user interface.

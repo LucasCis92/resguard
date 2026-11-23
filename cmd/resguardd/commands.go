@@ -14,45 +14,50 @@ import (
 	"github.com/LucasCis92/resguard/internal/collector"
 	"github.com/LucasCis92/resguard/internal/daemon"
 	"github.com/LucasCis92/resguard/internal/events"
+	"github.com/LucasCis92/resguard/internal/i18n"
 	"github.com/LucasCis92/resguard/internal/ipc"
 	"github.com/LucasCis92/resguard/internal/metrics"
 	"github.com/LucasCis92/resguard/internal/version"
 )
 
-var errNoSample = errors.New("todavía no hay muestras; espera un par de segundos")
+func errNoSample(p i18n.Printer) error {
+	return errors.New(p.T("no samples yet; wait a couple of seconds"))
+}
 
 func registerCommands(srv *daemon.Server, col *collector.Collector, store *events.Store, cur *current) {
-	srv.Register(daemon.Command{Name: "ping", Description: "comprueba que el demonio responde",
-		Text: func([]string) (string, error) { return "pong", nil }})
-	srv.Register(daemon.Command{Name: "version", Description: "versión del demonio",
-		Text: func([]string) (string, error) { return version.Version, nil }})
-	srv.Register(daemon.Command{Name: "status", Description: "resumen del estado del sistema",
-		Text: func([]string) (string, error) { return status(col, store) }})
-	srv.Register(daemon.Command{Name: "history", Usage: "history [n]", Description: "últimas n muestras (20 por defecto)",
-		Text: func(args []string) (string, error) { return historyCmd(col, args) }})
-	srv.Register(daemon.Command{Name: "services", Usage: "services [cpu|mem] [apps|servicios|contenedores] [n]",
-		Description: "servicios, aplicaciones y contenedores que más consumen",
-		Text:        func(args []string) (string, error) { return servicesCmd(col, args) }})
-	srv.Register(daemon.Command{Name: "events", Usage: "events [n]", Description: "últimas n incidencias (20 por defecto)",
-		Text: func(args []string) (string, error) { return eventsCmd(store, args) }})
-	srv.Register(daemon.Command{Name: "event", Usage: "event <id>", Description: "detalle de una incidencia",
-		Text: func(args []string) (string, error) { return eventCmd(store, args) }})
+	srv.Register(daemon.Command{Name: "ping", Description: i18n.M("check that the daemon answers"),
+		Text: func(daemon.Call) (string, error) { return "pong", nil }})
+	srv.Register(daemon.Command{Name: "version", Description: i18n.M("daemon version"),
+		Text: func(daemon.Call) (string, error) { return version.Version, nil }})
+	srv.Register(daemon.Command{Name: "status", Description: i18n.M("summary of the system state"),
+		Text: func(c daemon.Call) (string, error) { return status(col, store, c.P) }})
+	srv.Register(daemon.Command{Name: "history", Usage: i18n.M("history [n]"),
+		Description: i18n.M("last n samples (20 by default)"),
+		Text:        func(c daemon.Call) (string, error) { return historyCmd(col, c) }})
+	srv.Register(daemon.Command{Name: "services", Usage: i18n.M("services [cpu|mem] [apps|services|containers|sessions] [n]"),
+		Description: i18n.M("services, applications and containers using the most resources"),
+		Text:        func(c daemon.Call) (string, error) { return servicesCmd(col, c) }})
+	srv.Register(daemon.Command{Name: "events", Usage: i18n.M("events [n]"),
+		Description: i18n.M("last n incidents (20 by default)"),
+		Text:        func(c daemon.Call) (string, error) { return eventsCmd(store, c) }})
+	srv.Register(daemon.Command{Name: "event", Usage: i18n.M("event <id>"),
+		Description: i18n.M("details of an incident"),
+		Text:        func(c daemon.Call) (string, error) { return eventCmd(store, c) }})
+	srv.Register(daemon.Command{Name: "config", Description: i18n.M("configuration in use and where it was loaded from"),
+		Text: func(c daemon.Call) (string, error) { return cur.get().describe(c.P), nil }})
 
-	srv.Register(daemon.Command{Name: "config", Description: "configuración en uso y de dónde se cargó",
-		Text: func([]string) (string, error) { return cur.get().describe(), nil }})
-
-	// Procesos de unas unidades, para la vista de procesos de "watch". Solo
-	// se aceptan nombres de unidades que el recolector conoce: la ruta del
-	// cgroup nunca la decide el cliente.
-	procReader := metrics.NewReader() // propio: el del recolector no es concurrente
+	// Processes of some units, for the process view of "watch". Only unit
+	// names the collector knows are accepted: the client never chooses the
+	// cgroup path.
+	procReader := metrics.NewReader() // its own: the collector's is not concurrent
 	var procMu sync.Mutex
 	srv.Register(daemon.Command{Name: "processes", Hidden: true,
-		Data: func(args []string) (any, error) {
-			if len(args) == 0 || len(args) > 20 {
-				return nil, errors.New("uso: processes <unidad>...")
+		Data: func(c daemon.Call) (any, error) {
+			if len(c.Args) == 0 || len(c.Args) > 20 {
+				return nil, errors.New(c.P.T("usage: processes <unit>..."))
 			}
 			want := map[string]bool{}
-			for _, a := range args {
+			for _, a := range c.Args {
 				want[a] = true
 			}
 			list := ipc.ProcessList{Time: time.Now(), NumCPU: runtime.NumCPU()}
@@ -74,68 +79,69 @@ func registerCommands(srv *daemon.Server, col *collector.Collector, store *event
 				}
 			}
 			if len(list.Units) == 0 {
-				return nil, errors.New("la unidad ya no está en ejecución")
+				return nil, errors.New(c.P.T("the unit is no longer running"))
 			}
 			return list, nil
 		}})
 
-	// Estado completo para la vista "watch" de la CLI.
+	// Full state for the CLI's "watch" view.
 	srv.Register(daemon.Command{Name: "snapshot", Hidden: true,
-		Data: func([]string) (any, error) {
+		Data: func(c daemon.Call) (any, error) {
 			s, ok := col.Latest()
 			if !ok {
-				return nil, errNoSample
+				return nil, errNoSample(c.P)
 			}
 			return ipc.Snapshot{Sample: s, Services: col.Services(), Events: store.Recent(5), Interval: col.Interval()}, nil
 		}})
 }
 
-func status(col *collector.Collector, store *events.Store) (string, error) {
+func status(col *collector.Collector, store *events.Store, p i18n.Printer) (string, error) {
 	s, ok := col.Latest()
 	if !ok {
-		return "", errNoSample
+		return "", errNoSample(p)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Muestra:  %s\n", s.Time.Format("15:04:05"))
-	fmt.Fprintf(&b, "CPU:      %5.1f%%   carga %.2f %.2f %.2f\n", s.CPUPercent, s.Load1, s.Load5, s.Load15)
-	fmt.Fprintf(&b, "Memoria:  %5.1f%%   %d MiB disponibles de %d MiB\n",
-		s.MemUsedPercent, s.MemAvailableKB/1024, s.MemTotalKB/1024)
-	fmt.Fprintf(&b, "Swap:     %5.1f%%\n", s.SwapUsedPercent)
+	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(tw, "%s\t%s\n", p.T("Sample:"), s.Time.Format("15:04:05"))
+	fmt.Fprintf(tw, "%s\t%5.1f%%   %s\n", p.T("CPU:"), s.CPUPercent, p.T("load %.2f %.2f %.2f", s.Load1, s.Load5, s.Load15))
+	fmt.Fprintf(tw, "%s\t%5.1f%%   %s\n", p.T("Memory:"), s.MemUsedPercent,
+		p.T("%d MiB available of %d MiB", s.MemAvailableKB/1024, s.MemTotalKB/1024))
+	fmt.Fprintf(tw, "%s\t%5.1f%%\n", p.T("Swap:"), s.SwapUsedPercent)
 	if s.PSI.Available {
-		fmt.Fprintf(&b, "Presión:  cpu %.1f%%  memoria %.1f%%  E/S %.1f%%  (PSI some avg10)\n",
-			s.PSI.CPU.Avg10, s.PSI.Memory.Avg10, s.PSI.IO.Avg10)
+		fmt.Fprintf(tw, "%s\t%s\n", p.T("Pressure:"),
+			p.T("cpu %.1f%%  memory %.1f%%  I/O %.1f%%  (PSI some avg10)", s.PSI.CPU.Avg10, s.PSI.Memory.Avg10, s.PSI.IO.Avg10))
 	} else {
-		b.WriteString("Presión:  PSI no disponible en este kernel\n")
+		fmt.Fprintf(tw, "%s\t%s\n", p.T("Pressure:"), p.T("PSI is not available on this kernel"))
 	}
+	tw.Flush()
 
-	recent := store.Recent(0)
 	cutoff := time.Now().Add(-time.Hour)
 	var lastHour int
-	for _, e := range recent {
+	for _, e := range store.Recent(0) {
 		if e.Time.After(cutoff) && e.Kind != events.PeakEnd {
 			lastHour++
 		}
 	}
-	fmt.Fprintf(&b, "Incidencias en la última hora: %d", lastHour)
+	b.WriteString(p.T("Incidents in the last hour: %d", lastHour))
 	if lastHour > 0 {
-		b.WriteString(` (usa "events")`)
+		b.WriteString(" " + p.T(`(see "events")`))
 	}
 	return b.String(), nil
 }
 
-// historyCmd: history [n] — últimas n muestras (por defecto 20).
-func historyCmd(col *collector.Collector, args []string) (string, error) {
-	n, err := countArg(args, 20)
+// historyCmd: history [n]: the last n samples (20 by default).
+func historyCmd(col *collector.Collector, c daemon.Call) (string, error) {
+	n, err := countArg(c.Args, 20, c.P)
 	if err != nil {
 		return "", err
 	}
 	samples := col.History(n)
 	if len(samples) == 0 {
-		return "", errNoSample
+		return "", errNoSample(c.P)
 	}
 	var b strings.Builder
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', tabwriter.AlignRight)
-	fmt.Fprintln(tw, "HORA\tCPU%\tMEM%\tSWAP%\tCARGA1\tPSI-CPU\tPSI-MEM\tPSI-IO\t")
+	fmt.Fprintf(tw, "%s\tCPU%%\tMEM%%\tSWAP%%\t%s\tPSI-CPU\tPSI-MEM\tPSI-IO\t\n", c.P.T("TIME"), c.P.T("LOAD1"))
 	for _, s := range samples {
 		fmt.Fprintf(tw, "%s\t%.1f\t%.1f\t%.1f\t%.2f\t%.1f\t%.1f\t%.1f\t\n",
 			s.Time.Format("15:04:05"), s.CPUPercent, s.MemUsedPercent, s.SwapUsedPercent,
@@ -145,28 +151,29 @@ func historyCmd(col *collector.Collector, args []string) (string, error) {
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-// kindFilters relaciona los filtros de "services" con los tipos de unidad.
+// kindFilters maps the filters of "services" (English and Spanish) to unit kinds.
 var kindFilters = map[string]string{
-	"apps":         metrics.KindApp,
-	"servicios":    metrics.KindService,
-	"contenedores": metrics.KindContainer,
-	"sesiones":     metrics.KindSession,
+	"apps":     metrics.KindApp,
+	"services": metrics.KindService, "servicios": metrics.KindService,
+	"containers": metrics.KindContainer, "contenedores": metrics.KindContainer,
+	"sessions": metrics.KindSession, "sesiones": metrics.KindSession,
 }
 
-// servicesCmd: services [cpu|mem] [apps|servicios|contenedores] [n] — unidades
-// ordenadas por consumo, opcionalmente solo de un tipo. Los argumentos pueden
-// ir en cualquier orden.
-func servicesCmd(col *collector.Collector, args []string) (string, error) {
+// servicesCmd: services [cpu|mem] [apps|services|containers|sessions] [n]:
+// units sorted by usage, optionally of one kind only. Arguments may come in
+// any order.
+func servicesCmd(col *collector.Collector, c daemon.Call) (string, error) {
+	p := c.P
 	sortBy, kind, n := "cpu", "", 15
-	for _, a := range args {
+	for _, a := range c.Args {
 		if a == "cpu" || a == "mem" {
 			sortBy = a
 		} else if k, ok := kindFilters[a]; ok {
 			kind = k
-		} else if v, err := countArg([]string{a}, 0); err == nil {
+		} else if v, err := countArg([]string{a}, 0, p); err == nil {
 			n = v
 		} else {
-			return "", fmt.Errorf("argumento desconocido %q (uso: services [cpu|mem] [apps|servicios|contenedores|sesiones] [n])", a)
+			return "", errors.New(p.T("unknown argument %q (usage: services [cpu|mem] [apps|services|containers|sessions] [n])", a))
 		}
 	}
 
@@ -177,7 +184,7 @@ func servicesCmd(col *collector.Collector, args []string) (string, error) {
 		}
 	}
 	if len(svcs) == 0 {
-		return "", errors.New("no se encontraron unidades de ese tipo (revisa services.slices en la configuración)")
+		return "", errors.New(p.T("no units of that kind were found (check services.slices in the configuration)"))
 	}
 	sort.SliceStable(svcs, func(i, j int) bool {
 		if sortBy == "mem" {
@@ -191,103 +198,96 @@ func servicesCmd(col *collector.Collector, args []string) (string, error) {
 
 	var b strings.Builder
 	tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NOMBRE\tTIPO\tCPU%\tMEMORIA\tLÍMITE\tOOM KILLS")
+	fmt.Fprintf(tw, "%s\t%s\tCPU%%\t%s\t%s\tOOM KILLS\n", p.T("NAME"), p.T("KIND"), p.T("MEMORY"), p.T("LIMIT"))
 	for _, s := range svcs {
 		limit := "-"
 		if s.MemMax > 0 {
 			limit = mib(s.MemMax)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%.1f\t%s\t%s\t%d\n", s.Label(), s.Kind, s.CPUPercent, mib(s.MemBytes), limit, s.OOMKills)
+		fmt.Fprintf(tw, "%s\t%s\t%.1f\t%s\t%s\t%d\n", s.Label(), events.KindLabel(s.Kind, p), s.CPUPercent, mib(s.MemBytes), limit, s.OOMKills)
 	}
 	tw.Flush()
-	b.WriteString("CPU% es sobre la capacidad total de la máquina.")
+	b.WriteString(p.T("CPU usage is relative to the whole machine's capacity."))
 	return b.String(), nil
 }
 
-// eventsCmd: events [n] — últimas n incidencias (por defecto 20).
-func eventsCmd(store *events.Store, args []string) (string, error) {
-	n, err := countArg(args, 20)
+// eventsCmd: events [n]: the last n incidents (20 by default).
+func eventsCmd(store *events.Store, c daemon.Call) (string, error) {
+	n, err := countArg(c.Args, 20, c.P)
 	if err != nil {
 		return "", err
 	}
 	evs := store.Recent(n)
 	if len(evs) == 0 {
-		return "Sin incidencias registradas.", nil
+		return c.P.T("No incidents recorded."), nil
 	}
 	var b strings.Builder
 	for _, e := range evs {
-		fmt.Fprintf(&b, "#%-4d %s  %-8s %s\n", e.ID, e.Time.Format("2006-01-02 15:04:05"), severityLabel(e.Severity), e.Message)
+		fmt.Fprintf(&b, "#%-4d %s  %-8s %s\n", e.ID, e.Time.Format("2006-01-02 15:04:05"),
+			events.SeverityLabel(e.Severity, c.P), events.Describe(e, c.P))
 	}
-	b.WriteString(`Detalle con "event <id>".`)
+	b.WriteString(c.P.T(`Details with "event <id>".`))
 	return b.String(), nil
 }
 
-// eventCmd: event <id> — detalle de una incidencia con el contexto del sistema.
-func eventCmd(store *events.Store, args []string) (string, error) {
-	if len(args) != 1 {
-		return "", errors.New("uso: event <id>")
+// eventCmd: event <id>: details of an incident with the system context.
+func eventCmd(store *events.Store, c daemon.Call) (string, error) {
+	p := c.P
+	if len(c.Args) != 1 {
+		return "", errors.New(p.T("usage: event <id>"))
 	}
-	id, err := strconv.ParseUint(strings.TrimPrefix(args[0], "#"), 10, 64)
+	id, err := strconv.ParseUint(strings.TrimPrefix(c.Args[0], "#"), 10, 64)
 	if err != nil {
-		return "", fmt.Errorf("id inválido %q", args[0])
+		return "", errors.New(p.T("invalid id %q", c.Args[0]))
 	}
 	for _, e := range store.Recent(0) {
 		if e.ID != id {
 			continue
 		}
 		var b strings.Builder
-		fmt.Fprintf(&b, "Incidencia #%d — %s\n", e.ID, e.Message)
-		fmt.Fprintf(&b, "Fecha:     %s\n", e.Time.Format("2006-01-02 15:04:05"))
-		fmt.Fprintf(&b, "Tipo:      %s (%s)\n", e.Kind, e.Severity)
+		b.WriteString(p.T("Incident #%d: %s", e.ID, events.Describe(e, p)) + "\n")
+		tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "%s\t%s\n", p.T("Date:"), e.Time.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(tw, "%s\t%s (%s)\n", p.T("Type:"), e.Kind, events.SeverityLabel(e.Severity, p))
 		if e.Service != "" {
-			fmt.Fprintf(&b, "Servicio:  %s\n", e.Service)
+			fmt.Fprintf(tw, "%s\t%s\n", p.T("Unit:"), e.Service)
 		}
 		if e.Duration != "" {
-			fmt.Fprintf(&b, "Duración:  %s\n", e.Duration)
+			fmt.Fprintf(tw, "%s\t%s\n", p.T("Duration:"), e.Duration)
 		}
-		if c := e.Context; c != nil {
-			fmt.Fprintf(&b, "Sistema:   CPU %.1f%%, memoria %.1f%%, carga %.2f, PSI cpu/mem/io %.1f/%.1f/%.1f\n",
-				c.CPUPercent, c.MemUsedPercent, c.Load1, c.PSICPU, c.PSIMemory, c.PSIIO)
-			if len(c.TopCPU) > 0 {
-				b.WriteString("Más CPU:  ")
-				for _, s := range c.TopCPU {
-					fmt.Fprintf(&b, " %s (%.1f%%)", s.Label(), s.CPUPercent)
+		if ctx := e.Context; ctx != nil {
+			fmt.Fprintf(tw, "%s\t%s\n", p.T("System:"), p.T("CPU %.1f%%, memory %.1f%%, load %.2f, PSI cpu/mem/io %.1f/%.1f/%.1f",
+				ctx.CPUPercent, ctx.MemUsedPercent, ctx.Load1, ctx.PSICPU, ctx.PSIMemory, ctx.PSIIO))
+			if len(ctx.TopCPU) > 0 {
+				var parts []string
+				for _, s := range ctx.TopCPU {
+					parts = append(parts, fmt.Sprintf("%s (%.1f%%)", s.Label(), s.CPUPercent))
 				}
-				b.WriteString("\n")
+				fmt.Fprintf(tw, "%s\t%s\n", p.T("Top CPU:"), strings.Join(parts, "  "))
 			}
-			if len(c.TopMemory) > 0 {
-				b.WriteString("Más memoria:")
-				for _, s := range c.TopMemory {
-					fmt.Fprintf(&b, " %s (%s)", s.Label(), mib(s.MemBytes))
+			if len(ctx.TopMemory) > 0 {
+				var parts []string
+				for _, s := range ctx.TopMemory {
+					parts = append(parts, fmt.Sprintf("%s (%s)", s.Label(), mib(s.MemBytes)))
 				}
-				b.WriteString("\n")
+				fmt.Fprintf(tw, "%s\t%s\n", p.T("Top memory:"), strings.Join(parts, "  "))
 			}
 		}
+		tw.Flush()
 		return strings.TrimRight(b.String(), "\n"), nil
 	}
-	return "", fmt.Errorf("no hay ninguna incidencia #%d en memoria", id)
+	return "", errors.New(p.T("there is no incident #%d in memory", id))
 }
 
-func countArg(args []string, def int) (int, error) {
+func countArg(args []string, def int, p i18n.Printer) (int, error) {
 	if len(args) == 0 {
 		return def, nil
 	}
 	n, err := strconv.Atoi(args[0])
 	if err != nil || n <= 0 {
-		return 0, fmt.Errorf("número inválido %q", args[0])
+		return 0, errors.New(p.T("invalid number %q", args[0]))
 	}
 	return n, nil
-}
-
-func severityLabel(s events.Severity) string {
-	switch s {
-	case events.Critical:
-		return "CRÍTICO"
-	case events.Warning:
-		return "AVISO"
-	default:
-		return "INFO"
-	}
 }
 
 func mib(b uint64) string { return fmt.Sprintf("%.1f MiB", float64(b)/(1024*1024)) }

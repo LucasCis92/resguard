@@ -1,7 +1,7 @@
-// Package ipc define el protocolo entre el demonio y la CLI.
+// Package ipc defines the protocol between the daemon and the CLI.
 //
-// La comunicación se hace por un socket Unix intercambiando mensajes JSON,
-// uno por petición y uno por respuesta, sobre una conexión persistente.
+// They talk over a Unix socket exchanging JSON messages, one per request and
+// one per response, over a persistent connection.
 package ipc
 
 import (
@@ -15,19 +15,21 @@ import (
 	"github.com/LucasCis92/resguard/internal/metrics"
 )
 
-// DefaultSocketPath es la ruta por defecto del socket del demonio.
-// systemd crea /run/resguard gracias a RuntimeDirectory= en la unidad.
+// DefaultSocketPath is the daemon's default socket path. systemd creates
+// /run/resguard thanks to RuntimeDirectory= in the unit.
 const DefaultSocketPath = "/run/resguard/resguard.sock"
 
-// Request es una orden enviada por la CLI al demonio.
+// Request is a command sent by the CLI to the daemon. Lang is the language
+// ("en", "es") the caller wants text answers in; empty means English.
 type Request struct {
 	Command string   `json:"command"`
 	Args    []string `json:"args,omitempty"`
+	Lang    string   `json:"lang,omitempty"`
 }
 
-// Response es la contestación del demonio. Output es texto listo para mostrar;
-// Data, si existe, son datos estructurados para que la CLI los presente a su
-// manera (p. ej. la vista "watch").
+// Response is the daemon's answer. Output is text ready to print; Data, when
+// present, is structured data for the CLI to present its own way (e.g. the
+// "watch" view).
 type Response struct {
 	OK     bool            `json:"ok"`
 	Output string          `json:"output,omitempty"`
@@ -35,32 +37,32 @@ type Response struct {
 	Error  string          `json:"error,omitempty"`
 }
 
-// Decode interpreta Data en v.
+// Decode unmarshals Data into v.
 func (r Response) Decode(v any) error {
 	if len(r.Data) == 0 {
-		return fmt.Errorf("la respuesta no contiene datos")
+		return fmt.Errorf("the response carries no data")
 	}
 	return json.Unmarshal(r.Data, v)
 }
 
-// CommandInfo describe una orden del demonio (respuesta de datos de "help").
+// CommandInfo describes a daemon command (the data answer of "help").
 type CommandInfo struct {
 	Name        string `json:"name"`
 	Usage       string `json:"usage,omitempty"`
 	Description string `json:"description,omitempty"`
 }
 
-// ProcessList son los procesos de una o varias unidades (orden "processes").
-// El uso de CPU de cada proceso lo calcula la CLI comparando CPUTicks entre
-// dos respuestas.
+// ProcessList holds the processes of one or more units ("processes" command).
+// The CLI computes each process's CPU usage by comparing CPUTicks between two
+// answers.
 type ProcessList struct {
 	Time      time.Time         `json:"time"`
 	NumCPU    int               `json:"num_cpu"`
-	Units     []string          `json:"units"` // unidades encontradas
+	Units     []string          `json:"units"` // units that were found
 	Processes []metrics.Process `json:"processes"`
 }
 
-// Snapshot es el estado completo que usa la vista "watch" (orden "snapshot").
+// Snapshot is the full state used by the "watch" view ("snapshot" command).
 type Snapshot struct {
 	Sample   collector.Sample          `json:"sample"`
 	Services []collector.ServiceSample `json:"services"`
@@ -68,35 +70,38 @@ type Snapshot struct {
 	Interval time.Duration             `json:"interval"`
 }
 
-// Client mantiene una conexión abierta con el demonio.
+// Client keeps a connection open to the daemon.
 type Client struct {
 	conn net.Conn
 	enc  *json.Encoder
 	dec  *json.Decoder
+
+	// Lang is sent with every request so the daemon answers in it.
+	Lang string
 }
 
-// Dial abre una conexión con el demonio en socketPath.
+// Dial opens a connection to the daemon at socketPath.
 func Dial(socketPath string) (*Client, error) {
 	conn, err := net.Dial("unix", socketPath)
 	if err != nil {
-		return nil, fmt.Errorf("no se pudo conectar con el demonio en %s: %w", socketPath, err)
+		return nil, fmt.Errorf("connecting to the daemon at %s: %w", socketPath, err)
 	}
 	return &Client{conn: conn, enc: json.NewEncoder(conn), dec: json.NewDecoder(conn)}, nil
 }
 
-// Call envía una orden y espera su respuesta.
+// Call sends a command and waits for its answer.
 func (c *Client) Call(command string, args ...string) (Response, error) {
 	var resp Response
-	if err := c.enc.Encode(Request{Command: command, Args: args}); err != nil {
-		return resp, fmt.Errorf("enviando petición: %w", err)
+	if err := c.enc.Encode(Request{Command: command, Args: args, Lang: c.Lang}); err != nil {
+		return resp, fmt.Errorf("sending request: %w", err)
 	}
 	if err := c.dec.Decode(&resp); err != nil {
-		return resp, fmt.Errorf("leyendo respuesta: %w", err)
+		return resp, fmt.Errorf("reading response: %w", err)
 	}
 	return resp, nil
 }
 
-// Close cierra la conexión.
+// Close closes the connection.
 func (c *Client) Close() error {
 	return c.conn.Close()
 }

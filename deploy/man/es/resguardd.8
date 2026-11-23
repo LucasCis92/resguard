@@ -1,0 +1,96 @@
+.TH RESGUARDD 8 "noviembre de 2026" "resguard" "Administración del sistema"
+.SH NOMBRE
+resguardd \- demonio de monitorización de recursos y registro de incidencias
+.SH SINOPSIS
+.B resguardd
+.RI [ opciones ]
+.br
+.B resguardd \-check\-config
+.RB [ \-config
+.IR archivo ]
+.SH DESCRIPCIÓN
+.B resguardd
+toma muestras periódicas de CPU, memoria, swap, carga y presión (PSI) del sistema
+y del consumo de cada servicio, aplicación de escritorio y contenedor (cgroups v2).
+Registra como incidencias los picos de recursos, los OOM kills y las caídas de
+servicios notificadas por systemd, junto con el estado del sistema en ese momento.
+.PP
+Normalmente lo arranca systemd
+.RB ( resguard.service );
+no hace falta ejecutarlo a mano. Se consulta con
+.BR resguardctl (1).
+Si ya hay una copia en marcha, una segunda se niega a arrancar.
+.PP
+Los logs del demonio y la salida de
+.B \-check\-config
+están siempre en inglés; el texto que envía a
+.BR resguardctl (1)
+sigue el idioma de cada usuario.
+.SH OPCIONES
+.TP
+.BI \-config " archivo"
+Archivo de configuración (por defecto
+.IR /etc/resguard/config.yaml ;
+si no existe se usan los valores por defecto).
+.TP
+.B \-check\-config
+Valida la configuración, muestra la que resultaría y termina. Devuelve 1 si no es válida.
+.TP
+.BI \-socket " ruta"
+Socket Unix para la CLI (por defecto
+.IR /run/resguard/resguard.sock ).
+.TP
+.BI \-group " grupo"
+Grupo propietario del socket; sus miembros pueden usar la CLI sin ser root.
+.TP
+.BI \-events\-file " archivo"
+Archivo JSON Lines donde se añaden las incidencias.
+.TP
+.BR \-systemd " system|user|off"
+Instancia de systemd cuyas caídas de servicios se vigilan.
+.PP
+Las opciones
+.BR \-interval ", " \-history ", " \-slices ", " \-cpu\-threshold ", " \-mem\-threshold ,
+.BR \-psi\-cpu\-threshold ", " \-psi\-mem\-threshold ", " \-psi\-io\-threshold " y " \-sustain
+equivalen a claves del archivo de configuración y tienen prioridad sobre él; están
+pensadas para el desarrollo.
+.SH CONFIGURACIÓN
+El archivo YAML admite
+.BR interval ", " history ,
+.B thresholds
+.RB ( cpu ", " memory ", " psi_cpu ", " psi_memory ", " psi_io ", " sustain )
+y
+.B services
+.RB ( slices ", " ignore ).
+El archivo instalado documenta cada clave. Tras editarlo:
+.PP
+.RS
+.B sudo resguardd \-check\-config
+.br
+.B sudo systemctl reload resguard
+.RE
+.PP
+La recarga (SIGHUP) conserva el historial y los picos en curso. Si el archivo no
+es válido, se mantiene la configuración anterior y se registra el error. Por
+seguridad, el archivo se rechaza si otros usuarios pueden modificarlo.
+.SH SEÑALES
+.TP
+.B SIGHUP
+Recarga la configuración.
+.TP
+.BR SIGTERM ", " SIGINT
+Termina ordenadamente.
+.SH ARCHIVOS
+.TP
+.I /etc/resguard/config.yaml
+Configuración.
+.TP
+.I /var/lib/resguard/events.jsonl
+Registro de incidencias, una por línea en JSON (solo legible por root).
+.TP
+.I /run/resguard/resguard.sock
+Socket de la CLI.
+.SH VÉASE TAMBIÉN
+.BR resguardctl (1),
+.BR systemd.resource\-control (5),
+.BR journalctl (1)

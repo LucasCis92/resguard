@@ -12,36 +12,36 @@ import (
 	"strings"
 )
 
-// ClockTicks es la unidad de los tiempos de CPU de /proc/<pid>/stat (USER_HZ).
-// Vale 100 en todas las arquitecturas que usa Linux hoy.
+// ClockTicks is the unit of the CPU times in /proc/<pid>/stat (USER_HZ). It is
+// 100 on every architecture Linux uses today.
 const ClockTicks = 100
 
-// MaxProcesses limita los procesos que devuelve ReadProcesses.
+// MaxProcesses caps the processes returned by ReadProcesses.
 const MaxProcesses = 1000
 
-// Process es un proceso dentro del cgroup de una unidad.
+// Process is a process inside a unit's cgroup.
 //
-// Por privacidad no se incluye la línea de órdenes completa (puede contener
-// contraseñas o tokens): solo el nombre del proceso y, en navegadores basados
-// en Chromium y aplicaciones Electron, su papel (renderer, gpu-process…).
+// For privacy the full command line is never included (it may contain
+// passwords or tokens): only the process name and, for Chromium-based browsers
+// and Electron applications, its role (renderer, gpu-process…).
 type Process struct {
 	PID      int    `json:"pid"`
-	Name     string `json:"name"`           // nombre del proceso (/proc/<pid>/comm)
-	Role     string `json:"role,omitempty"` // p. ej. "renderer" o "utility: audio"
+	Name     string `json:"name"`           // process name (/proc/<pid>/comm)
+	Role     string `json:"role,omitempty"` // e.g. "renderer" or "utility: audio"
 	User     string `json:"user"`
 	Threads  int    `json:"threads"`
-	CPUTicks uint64 `json:"cpu_ticks"` // tiempo de CPU acumulado (utime+stime), en ClockTicks
+	CPUTicks uint64 `json:"cpu_ticks"` // cumulative CPU time (utime+stime), in ClockTicks
 	RSSBytes uint64 `json:"rss_bytes"`
 }
 
-// ReadProcesses devuelve los procesos del cgroup cgroupRel (relativo a la raíz
-// de cgroups) y de sus subcgroups. cgroupRel debe venir de ReadServices, nunca
-// directamente de un usuario.
+// ReadProcesses returns the processes of cgroup cgroupRel (relative to the
+// cgroup root) and of its sub-cgroups. cgroupRel must come from ReadServices,
+// never directly from a user.
 func (r *Reader) ReadProcesses(cgroupRel string) ([]Process, error) {
 	base := r.path(CgroupRoot)
 	dir := filepath.Join(base, cgroupRel)
 	if rel, err := filepath.Rel(base, dir); err != nil || strings.HasPrefix(rel, "..") {
-		return nil, errors.New("cgroup fuera de la jerarquía")
+		return nil, errors.New("cgroup outside the hierarchy")
 	}
 
 	var pids []int
@@ -86,7 +86,7 @@ func (r *Reader) ReadProcesses(cgroupRel string) ([]Process, error) {
 	return out, nil
 }
 
-// readProcess lee un proceso; devuelve false si terminó mientras se leía.
+// readProcess reads one process; it returns false if the process exited meanwhile.
 func (r *Reader) readProcess(pid int, pageSize uint64) (Process, bool) {
 	p := Process{PID: pid}
 	dir := r.path(filepath.Join("proc", strconv.Itoa(pid)))
@@ -95,15 +95,15 @@ func (r *Reader) readProcess(pid int, pageSize uint64) (Process, bool) {
 	if err != nil {
 		return p, false
 	}
-	// El nombre va entre paréntesis y puede contener espacios: se parsea
-	// a partir del último ")".
+	// The name is in parentheses and may contain spaces: parse from the
+	// last ")".
 	end := bytes.LastIndexByte(stat, ')')
 	if end < 0 {
 		return p, false
 	}
 	fields := strings.Fields(string(stat[end+1:]))
-	// Tras ")": estado(3) ppid(4) … utime(14) stime(15) … num_threads(20),
-	// es decir, índices 11, 12 y 17 contando desde el estado.
+	// After ")": state(3) ppid(4) … utime(14) stime(15) … num_threads(20),
+	// i.e. indexes 11, 12 and 17 counting from the state.
 	if len(fields) < 18 {
 		return p, false
 	}
@@ -123,15 +123,15 @@ func (r *Reader) readProcess(pid int, pageSize uint64) (Process, bool) {
 	}
 	p.User = r.processUser(filepath.Join(dir, "status"))
 	if cmdline, err := os.ReadFile(filepath.Join(dir, "cmdline")); err == nil {
-		// Chromium y Electron reescriben la línea de órdenes de sus subprocesos
-		// como un único texto separado por espacios, así que se divide por ambos.
+		// Chromium and Electron rewrite their subprocesses' command line as a
+		// single space-separated string, so split on both separators.
 		p.Role = processRole(strings.Fields(strings.ReplaceAll(string(cmdline), "\x00", " ")))
 	}
 	return p, true
 }
 
-// processRole extrae el papel de un proceso de Chromium o Electron a partir de
-// sus argumentos, sin devolver nada más de la línea de órdenes:
+// processRole extracts the role of a Chromium or Electron process from its
+// arguments, without returning anything else from the command line:
 //
 //	--type=renderer                                          → renderer
 //	--type=utility --utility-sub-type=audio.mojom.AudioService → utility: audio
@@ -157,7 +157,7 @@ func processRole(args []string) string {
 	return typ
 }
 
-// safeToken deja solo caracteres inocuos y limita la longitud.
+// safeToken keeps only harmless characters and limits the length.
 func safeToken(s string) string {
 	var b strings.Builder
 	for _, c := range s {

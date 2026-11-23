@@ -5,15 +5,15 @@ import (
 	"strings"
 )
 
-// completer completa con Tab nombres de órdenes y sus primeros argumentos.
+// completer completes command names and their first argument with Tab.
 type completer struct {
-	commands func() []string     // órdenes disponibles (del demonio y locales)
-	args     map[string][]string // valores posibles del primer argumento de cada orden
+	commands func() []string     // available commands (daemon and local)
+	args     map[string][]string // possible values of each command's first argument
 }
 
-// complete calcula el resultado de pulsar Tab con el cursor en pos.
-// Si hay una sola opción, la completa; si hay varias, completa su prefijo
-// común y, si no se puede avanzar más, devuelve las opciones para mostrarlas.
+// complete computes the result of pressing Tab with the cursor at pos. With
+// one option it completes it; with several it completes their common prefix
+// and, if that adds nothing, returns the options so they can be shown.
 func (c *completer) complete(line string, pos int) (newLine string, newPos int, options []string) {
 	before, after := line[:pos], line[pos:]
 	start := strings.LastIndexAny(before, " \t") + 1

@@ -1,6 +1,6 @@
 #!/bin/sh
-# prerm del paquete .deb (patrón de dh_installsystemd): detiene el servicio
-# al desinstalar; en una actualización lo reinicia el postinst de la nueva versión.
+# prerm of the .deb package (dh_installsystemd pattern): stops the service on
+# removal; on an upgrade the new version's postinst restarts it.
 set -e
 
 if [ -z "${DPKG_ROOT:-}" ] && [ "$1" = remove ] && [ -d /run/systemd/system ]; then

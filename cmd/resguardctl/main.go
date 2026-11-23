@@ -1,33 +1,33 @@
-// resguardctl es la CLI para consultar y controlar resguardd.
+// resguardctl is the CLI to query and control resguardd.
 //
-// Sin argumentos abre una sesión interactiva; con argumentos ejecuta una sola orden:
+// Without arguments it opens an interactive session; with arguments it runs a
+// single command:
 //
-//	resguardctl            # modo interactivo
-//	resguardctl status     # orden única
-//	resguardctl watch      # vista en vivo
-//	resguardctl logs       # logs del servicio
+//	resguardctl            # interactive mode
+//	resguardctl status     # single command
+//	resguardctl watch      # live view
+//	resguardctl logs       # service logs
+//
+// Text is shown in the user's language (RESGUARD_LANG, or the locale).
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
-	"io/fs"
 	"os"
 
+	"github.com/LucasCis92/resguard/internal/i18n"
 	"github.com/LucasCis92/resguard/internal/ipc"
 )
 
 func main() {
-	socketPath := flag.String("socket", ipc.DefaultSocketPath, "ruta del socket Unix del demonio")
+	p := i18n.New(i18n.Detect())
+	socketPath := flag.String("socket", ipc.DefaultSocketPath, p.T("daemon Unix socket path"))
 	flag.Parse()
 
-	s, err := newSession(*socketPath)
+	s, err := newSession(*socketPath, p)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		if errors.Is(err, fs.ErrPermission) {
-			fmt.Fprintln(os.Stderr, "Sugerencia: usa sudo, o añade tu usuario al grupo resguard (sudo usermod -aG resguard $USER) y vuelve a iniciar sesión.")
-		}
+		fmt.Fprintln(os.Stderr, (&session{socket: *socketPath, p: p}).connectError(err))
 		os.Exit(1)
 	}
 	defer s.close()
@@ -41,12 +41,12 @@ func main() {
 	switch args[0] {
 	case "watch":
 		if err := watch(s, args[1:], false); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+			fmt.Fprintln(os.Stderr, p.T("error:"), err)
 			os.Exit(1)
 		}
 	case "logs":
 		if err := logs(s, args[1:]); err != nil {
-			fmt.Fprintln(os.Stderr, "error:", err)
+			fmt.Fprintln(os.Stderr, p.T("error:"), err)
 			os.Exit(1)
 		}
 	default:

@@ -1,7 +1,11 @@
-// Package events registra las incidencias detectadas: picos de recursos,
-// OOM kills y caídas de servicios. Cada incidencia se escribe en el log del
-// demonio (el journal, bajo systemd), se conserva en memoria para la CLI y,
-// opcionalmente, se añade a un fichero JSON Lines que sobrevive a reinicios.
+// Package events records detected incidents: resource peaks, OOM kills and
+// service failures. Each incident is written to the daemon log (the journal,
+// under systemd), kept in memory for the CLI and, optionally, appended to a
+// JSON Lines file that survives restarts.
+//
+// Incidents are stored as structured data; Describe turns them into a
+// sentence in the reader's language. Message holds the English sentence, for
+// the log and for anyone reading the JSON file directly.
 package events
 
 import (
@@ -18,19 +22,20 @@ import (
 	"time"
 
 	"github.com/LucasCis92/resguard/internal/collector"
+	"github.com/LucasCis92/resguard/internal/i18n"
 )
 
-// Kind es el tipo de incidencia.
+// Kind is the type of incident.
 type Kind string
 
 const (
-	PeakStart     Kind = "peak_start"     // un recurso supera su umbral
-	PeakEnd       Kind = "peak_end"       // el recurso vuelve a la normalidad
-	OOMKill       Kind = "oom_kill"       // el OOM killer mató procesos de un servicio
-	ServiceFailed Kind = "service_failed" // un servicio terminó con error
+	PeakStart     Kind = "peak_start"     // a resource went over its threshold
+	PeakEnd       Kind = "peak_end"       // the resource is back to normal
+	OOMKill       Kind = "oom_kill"       // the OOM killer killed processes of a unit
+	ServiceFailed Kind = "service_failed" // a service exited with an error
 )
 
-// Severity es la gravedad de una incidencia.
+// Severity is how serious an incident is.
 type Severity string
 
 const (
@@ -39,25 +44,35 @@ const (
 	Critical Severity = "critical"
 )
 
-// Event es una incidencia registrada.
+// Event is a recorded incident.
 type Event struct {
 	ID       uint64    `json:"id"`
 	Time     time.Time `json:"time"`
 	Kind     Kind      `json:"kind"`
 	Severity Severity  `json:"severity"`
-	Message  string    `json:"message"`
+	Message  string    `json:"message"` // English sentence; see Describe
 
-	Resource  string  `json:"resource,omitempty"`  // en picos: cpu, memory, psi_cpu…
-	Service   string  `json:"service,omitempty"`   // en incidencias de servicios
-	Value     float64 `json:"value,omitempty"`     // valor que disparó el evento o máximo del pico
-	Threshold float64 `json:"threshold,omitempty"` // umbral superado
-	Duration  string  `json:"duration,omitempty"`  // duración de un pico, al terminar
+	Resource     string  `json:"resource,omitempty"`      // peaks: cpu, memory, psi_cpu…
+	Service      string  `json:"service,omitempty"`       // unit name, for unit incidents
+	ServiceLabel string  `json:"service_label,omitempty"` // readable unit name (Chrome…)
+	Value        float64 `json:"value,omitempty"`         // value that fired the event, peak maximum or OOM kill count
+	Threshold    float64 `json:"threshold,omitempty"`     // threshold that was crossed
+	Duration     string  `json:"duration,omitempty"`      // duration of a finished peak
 
-	Context *Context `json:"context,omitempty"` // estado del sistema en ese momento
+	// Why a peak ended early ("disabled") or why a service failed (systemd's
+	// Result: "exit-code", "signal", "oom-kill"…).
+	Reason     string `json:"reason,omitempty"`
+	ExitStatus int    `json:"exit_status,omitempty"` // exit code, or signal number for "signal"/"core-dump"
+	Restart    string `json:"restart,omitempty"`     // Restart= policy, when it is not "no"
+	Restarts   int    `json:"restarts,omitempty"`    // restarts before this failure
+	MemBytes   uint64 `json:"mem_bytes,omitempty"`   // OOM kills: the unit's memory usage
+	MemMax     uint64 `json:"mem_max,omitempty"`     // OOM kills: the unit's memory limit
+
+	Context *Context `json:"context,omitempty"` // system state at that moment
 }
 
-// Context es una foto resumida del sistema que acompaña a una incidencia,
-// para poder entender después qué estaba pasando.
+// Context is a summary of the system state attached to an incident, so that
+// what was going on can be understood later.
 type Context struct {
 	CPUPercent     float64        `json:"cpu_percent"`
 	MemUsedPercent float64        `json:"mem_used_percent"`
@@ -69,7 +84,7 @@ type Context struct {
 	TopMemory      []ServiceUsage `json:"top_memory,omitempty"`
 }
 
-// ServiceUsage es el consumo de un servicio dentro de un Context.
+// ServiceUsage is a unit's usage inside a Context.
 type ServiceUsage struct {
 	Name       string  `json:"name"`
 	Display    string  `json:"display,omitempty"`
@@ -78,7 +93,7 @@ type ServiceUsage struct {
 	MemBytes   uint64  `json:"mem_bytes"`
 }
 
-// Label devuelve el nombre legible, o el de la unidad si no hay otro.
+// Label returns the readable name, or the unit name if there is none.
 func (u ServiceUsage) Label() string {
 	if u.Display != "" {
 		return u.Display
@@ -86,8 +101,8 @@ func (u ServiceUsage) Label() string {
 	return u.Name
 }
 
-// NewContext construye el contexto a partir de una muestra, con los topN
-// servicios que más CPU y más memoria consumen.
+// NewContext builds a context from a sample, with the topN units using the
+// most CPU and the most memory.
 func NewContext(s collector.Sample, services []collector.ServiceSample, topN int) *Context {
 	ctx := &Context{
 		CPUPercent:     s.CPUPercent,
@@ -116,19 +131,19 @@ func top(services []collector.ServiceSample, n int, less func(a, b collector.Ser
 	return out
 }
 
-// Store guarda las incidencias.
+// Store keeps the incidents.
 type Store struct {
 	log *slog.Logger
 
 	mu     sync.Mutex
 	recent *collector.Ring[Event]
 	nextID uint64
-	file   *os.File // nil si no hay persistencia
+	file   *os.File // nil without persistence
 }
 
-// NewStore crea un almacén que conserva en memoria las últimas `keep`
-// incidencias. Si path no está vacío, las añade a ese fichero y, al arrancar,
-// recupera de él las más recientes.
+// NewStore creates a store that keeps the last `keep` incidents in memory. If
+// path is not empty, incidents are appended to that file, and the most recent
+// ones are loaded from it at startup.
 func NewStore(path string, keep int, log *slog.Logger) (*Store, error) {
 	s := &Store{log: log, recent: collector.NewRing[Event](keep), nextID: 1}
 	if path == "" {
@@ -138,11 +153,11 @@ func NewStore(path string, keep int, log *slog.Logger) (*Store, error) {
 		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return nil, fmt.Errorf("creando directorio de eventos: %w", err)
+		return nil, fmt.Errorf("creating the events directory: %w", err)
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 	if err != nil {
-		return nil, fmt.Errorf("abriendo fichero de eventos: %w", err)
+		return nil, fmt.Errorf("opening the events file: %w", err)
 	}
 	s.file = f
 	return s, nil
@@ -154,7 +169,7 @@ func (s *Store) load(path string) error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("leyendo fichero de eventos: %w", err)
+		return fmt.Errorf("reading the events file: %w", err)
 	}
 	defer f.Close()
 
@@ -163,7 +178,7 @@ func (s *Store) load(path string) error {
 	for line := 1; sc.Scan(); line++ {
 		var e Event
 		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
-			s.log.Warn("línea inválida en el fichero de eventos", "path", path, "line", line, "err", err)
+			s.log.Warn("invalid line in the events file", "path", path, "line", line, "err", err)
 			continue
 		}
 		s.recent.Push(e)
@@ -174,7 +189,8 @@ func (s *Store) load(path string) error {
 	return sc.Err()
 }
 
-// Add registra una incidencia: le asigna ID, la escribe en el log y la persiste.
+// Add records an incident: it assigns an ID, writes the English message,
+// logs it and persists it.
 func (s *Store) Add(e Event) Event {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -183,6 +199,9 @@ func (s *Store) Add(e Event) Event {
 	s.nextID++
 	if e.Time.IsZero() {
 		e.Time = time.Now()
+	}
+	if e.Message == "" {
+		e.Message = Describe(e, i18n.New(i18n.English))
 	}
 	s.recent.Push(e)
 	s.logEvent(e)
@@ -193,7 +212,7 @@ func (s *Store) Add(e Event) Event {
 			_, err = s.file.Write(append(data, '\n'))
 		}
 		if err != nil {
-			s.log.Error("guardando evento", "err", err)
+			s.log.Error("saving event", "err", err)
 		}
 	}
 	return e
@@ -232,14 +251,14 @@ func (s *Store) logEvent(e Event) {
 	}
 }
 
-// Recent devuelve hasta n incidencias, de la más antigua a la más reciente.
+// Recent returns up to n incidents, oldest first.
 func (s *Store) Recent(n int) []Event {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.recent.Last(n)
 }
 
-// Close cierra el fichero de eventos.
+// Close closes the events file.
 func (s *Store) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

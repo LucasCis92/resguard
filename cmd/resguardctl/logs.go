@@ -8,25 +8,27 @@ import (
 	"os/signal"
 	"strconv"
 
+	"github.com/LucasCis92/resguard/internal/i18n"
 	"github.com/LucasCis92/resguard/internal/ipc"
 )
 
-// serviceUnit es la unidad de systemd del demonio.
+// serviceUnit is the daemon's systemd unit.
 const serviceUnit = "resguard.service"
 
-// logsArgs construye los argumentos de journalctl para "logs [n] [avisos] [seguir]".
-func logsArgs(args []string) ([]string, error) {
+// logsArgs builds journalctl's arguments for "logs [n] [warnings] [follow]".
+// The Spanish words (avisos, seguir) are accepted too.
+func logsArgs(args []string, p i18n.Printer) ([]string, error) {
 	n, follow, warnings := 50, false, false
 	for _, a := range args {
 		switch a {
-		case "seguir", "-f":
+		case "follow", "seguir", "-f":
 			follow = true
-		case "avisos":
+		case "warnings", "avisos":
 			warnings = true
 		default:
 			v, err := strconv.Atoi(a)
 			if err != nil || v <= 0 || v > 100000 {
-				return nil, fmt.Errorf("argumento desconocido %q (uso: logs [n] [avisos] [seguir])", a)
+				return nil, errors.New(p.T("unknown argument %q (usage: logs [n] [warnings] [follow])", a))
 			}
 			n = v
 		}
@@ -43,23 +45,23 @@ func logsArgs(args []string) ([]string, error) {
 	return jargs, nil
 }
 
-// logs muestra los logs del servicio con journalctl. Durante la ejecución,
-// Ctrl+C detiene journalctl pero no la CLI.
+// logs shows the service logs with journalctl. While it runs, Ctrl+C stops
+// journalctl but not the CLI.
 func logs(s *session, args []string) error {
-	jargs, err := logsArgs(args)
+	jargs, err := logsArgs(args, s.p)
 	if err != nil {
 		return err
 	}
 	path, err := exec.LookPath("journalctl")
 	if err != nil {
-		return errors.New("no se encuentra journalctl: los logs solo están disponibles con systemd")
+		return errors.New(s.p.T("journalctl not found: logs are only available with systemd"))
 	}
 	if s.socket != ipc.DefaultSocketPath {
-		fmt.Fprintln(os.Stderr, "Nota: estos son los logs del servicio instalado; un demonio de desarrollo (make dev) escribe los suyos en su propia terminal.")
+		fmt.Fprintln(os.Stderr, s.p.T("Note: these are the installed service's logs; a development daemon (make dev) writes its own to its terminal."))
 	}
 
-	// Se captura SIGINT (no se ignora: una señal ignorada la heredaría
-	// journalctl y Ctrl+C dejaría de detenerlo).
+	// Catch SIGINT rather than ignore it: an ignored signal would be inherited
+	// by journalctl and Ctrl+C would no longer stop it.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
 	defer signal.Stop(sig)
@@ -69,7 +71,7 @@ func logs(s *session, args []string) error {
 	err = cmd.Run()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && !exitErr.Exited() {
-		return nil // terminado con Ctrl+C
+		return nil // stopped with Ctrl+C
 	}
 	return err
 }

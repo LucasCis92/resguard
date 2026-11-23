@@ -1,9 +1,9 @@
 name: Release
 
-# Se ejecuta al subir una etiqueta de versión:
+# Runs when a version tag is pushed:
 #   git tag v0.1.0 && git push origin v0.1.0
-# Compila, empaqueta (.deb, .rpm, .tar.gz) y crea un BORRADOR de release en
-# GitHub con atestaciones de procedencia. Revisa el borrador y publícalo a mano.
+# It builds, packages (.deb, .rpm, .tar.gz) and creates a DRAFT GitHub release
+# with provenance attestations. Review the draft and publish it by hand.
 on:
   push:
     tags: ["v*"]
@@ -18,32 +18,31 @@ concurrency:
 jobs:
   release:
     runs-on: ubuntu-latest
-    # Con un "environment" se puede exigir aprobación manual antes de que este
-    # trabajo obtenga permisos de escritura: Settings → Environments → release
-    # → Required reviewers.
+    # An "environment" can require manual approval before this job gets write
+    # permissions: Settings → Environments → release → Required reviewers.
     environment: release
     permissions:
-      contents: write # crear el borrador de la release y subir los paquetes
-      id-token: write # firmar las atestaciones con la identidad del workflow
+      contents: write # create the draft release and upload the packages
+      id-token: write # sign the attestations with the workflow's identity
       attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # GoReleaser necesita el historial para el changelog
+          fetch-depth: 0 # GoReleaser needs the history for the changelog
           persist-credentials: false
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
-          cache: false # sin caché en releases: todo se compila desde cero
+          cache: false # no cache for releases: everything is built from scratch
 
-      - name: Comprobar que la etiqueta coincide con el changelog del paquete
+      - name: Check that the tag matches the package changelog
         run: |
           tag="${GITHUB_REF_NAME#v}"
           first=$(grep -m1 -oP '^- semver: \K\S+' deploy/package/changelog.yml)
           if [ "$tag" != "$first" ]; then
-            echo "La etiqueta es v$tag pero la última entrada de deploy/package/changelog.yml es $first."
-            echo "Añade una entrada para $tag antes de publicar."
+            echo "The tag is v$tag but the latest entry of deploy/package/changelog.yml is $first."
+            echo "Add an entry for $tag before publishing."
             exit 1
           fi
 
@@ -55,9 +54,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # Atestación de procedencia: permite verificar que cada paquete se generó
-      # en este repositorio, con este workflow, a partir de esta etiqueta:
-      #   gh attestation verify <paquete> --repo LucasCis92/resguard
+      # Provenance attestation: lets anyone verify that each package was built
+      # in this repository, by this workflow, from this tag:
+      #   gh attestation verify <package> --repo LucasCis92/resguard
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |

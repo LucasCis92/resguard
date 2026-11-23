@@ -1,5 +1,5 @@
-// Package collector toma muestras periódicas del sistema y de los servicios,
-// calcula los valores derivados (porcentajes de CPU) y guarda un historial.
+// Package collector samples the system and its units periodically, computes
+// derived values (CPU percentages) and keeps a history.
 package collector
 
 import (
@@ -13,7 +13,7 @@ import (
 	"github.com/LucasCis92/resguard/internal/metrics"
 )
 
-// Sample es una muestra ya procesada del estado del sistema.
+// Sample is a processed snapshot of the system state.
 type Sample struct {
 	Time            time.Time   `json:"time"`
 	CPUPercent      float64     `json:"cpu_percent"`
@@ -27,32 +27,32 @@ type Sample struct {
 	PSI             metrics.PSI `json:"psi"`
 }
 
-// ServiceSample es el uso de recursos de un servicio en una muestra.
+// ServiceSample is a unit's resource usage in one sample.
 type ServiceSample struct {
-	Name    string `json:"name"`              // unidad de systemd
-	Display string `json:"display,omitempty"` // nombre legible (Chrome, laravel_app…)
-	Kind    string `json:"kind,omitempty"`    // servicio, app, contenedor, sesión u otro
-	Cgroup  string `json:"-"`                 // ruta del cgroup; no se envía a la CLI
-	// Units son las unidades que forman el grupo, en los resultados de Grouped.
+	Name    string `json:"name"`              // systemd unit
+	Display string `json:"display,omitempty"` // readable name (Chrome, laravel_app…)
+	Kind    string `json:"kind,omitempty"`    // one of the metrics.Kind* constants
+	Cgroup  string `json:"-"`                 // cgroup path; never sent to the CLI
+	// Units are the units that make up a group, in the results of Grouped.
 	Units      []string `json:"units,omitempty"`
-	CPUPercent float64  `json:"cpu_percent"` // sobre la capacidad total de la máquina
+	CPUPercent float64  `json:"cpu_percent"` // of the whole machine's capacity
 	MemBytes   uint64   `json:"mem_bytes"`
-	MemMax     uint64   `json:"mem_max,omitempty"` // 0 = sin límite
-	OOMKills   uint64   `json:"oom_kills"`         // acumulado desde que existe el cgroup
+	MemMax     uint64   `json:"mem_max,omitempty"` // 0 = no limit
+	OOMKills   uint64   `json:"oom_kills"`         // cumulative since the cgroup was created
 }
 
-// Observer recibe cada muestra nueva. Se llama de forma síncrona desde el
-// bucle del recolector, así que debe volver rápido.
+// Observer receives every new sample. It is called synchronously from the
+// collector loop, so it must return quickly.
 type Observer func(Sample, []ServiceSample)
 
-// Config ajusta el recolector.
+// Config tunes the collector.
 type Config struct {
-	Interval time.Duration // periodo de muestreo
-	History  int           // número de muestras a conservar
-	Slices   []string      // slices de cgroups donde buscar servicios
+	Interval time.Duration // sampling period
+	History  int           // number of samples to keep
+	Slices   []string      // cgroup slices to scan for units
 }
 
-// Collector muestrea el sistema periódicamente.
+// Collector samples the system periodically.
 type Collector struct {
 	reader    *metrics.Reader
 	log       *slog.Logger
@@ -61,17 +61,17 @@ type Collector struct {
 
 	mu       sync.RWMutex
 	cfg      Config
-	reset    chan struct{} // avisa a Run de que cambió el intervalo
+	reset    chan struct{} // tells Run that the interval changed
 	history  *Ring[Sample]
-	services []ServiceSample // solo los de la última muestra
+	services []ServiceSample // only those of the latest sample
 
-	// Lecturas en bruto anteriores, para calcular deltas.
+	// Previous raw readings, to compute deltas.
 	prevSys metrics.System
 	prevSvc map[string]metrics.Service
 	hasPrev bool
 }
 
-// New crea un recolector.
+// New creates a collector.
 func New(cfg Config, reader *metrics.Reader, log *slog.Logger) *Collector {
 	if cfg.Interval <= 0 {
 		cfg.Interval = 2 * time.Second
@@ -86,8 +86,8 @@ func New(cfg Config, reader *metrics.Reader, log *slog.Logger) *Collector {
 	}
 }
 
-// Configure aplica una configuración nueva mientras el recolector funciona.
-// El historial conserva las muestras más recientes que quepan en el nuevo tamaño.
+// Configure applies a new configuration while the collector runs. The history
+// keeps the most recent samples that fit in the new size.
 func (c *Collector) Configure(cfg Config) {
 	if cfg.Interval <= 0 {
 		cfg.Interval = 2 * time.Second
@@ -108,19 +108,19 @@ func (c *Collector) Configure(cfg Config) {
 	}
 }
 
-// Interval devuelve el periodo de muestreo actual.
+// Interval returns the current sampling period.
 func (c *Collector) Interval() time.Duration {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.cfg.Interval
 }
 
-// Observe registra un observador. Debe llamarse antes de Run.
+// Observe registers an observer. It must be called before Run.
 func (c *Collector) Observe(o Observer) { c.observers = append(c.observers, o) }
 
-// Run muestrea hasta que ctx se cancela.
+// Run samples until ctx is canceled.
 func (c *Collector) Run(ctx context.Context) {
-	// La primera lectura solo sirve de referencia para los deltas.
+	// The first reading is only a baseline for the deltas.
 	c.Tick()
 	t := time.NewTicker(c.Interval())
 	defer t.Stop()
@@ -136,11 +136,11 @@ func (c *Collector) Run(ctx context.Context) {
 	}
 }
 
-// Tick toma una muestra. Es pública para poder dirigir el recolector en los tests.
+// Tick takes one sample. It is exported so tests can drive the collector.
 func (c *Collector) Tick() {
 	sys, err := c.reader.ReadSystem()
 	if err != nil {
-		c.log.Error("leyendo métricas del sistema", "err", err)
+		c.log.Error("reading system metrics", "err", err)
 		return
 	}
 	c.mu.RLock()
@@ -148,7 +148,7 @@ func (c *Collector) Tick() {
 	c.mu.RUnlock()
 	raw, err := c.reader.ReadServices(slices)
 	if err != nil {
-		c.log.Warn("leyendo métricas de servicios", "err", err)
+		c.log.Warn("reading unit metrics", "err", err)
 	}
 
 	cur := make(map[string]metrics.Service, len(raw))
@@ -184,10 +184,11 @@ func (c *Collector) Tick() {
 					ss.CPUPercent = 100 * float64(s.CPUUsageUsec-p.CPUUsageUsec) / elapsedUsec / c.numCPU
 				}
 			} else if float64(s.CPUUsageUsec) <= elapsedUsec*c.numCPU {
-				// Unidad nueva: como se recorren todas en cada muestra, se creó
-				// después de la anterior y todo su consumo es de este intervalo.
-				// (Si supera lo posible en el intervalo, es una unidad antigua que
-				// acaba de entrar en la vigilancia, p. ej. al cambiar los slices.)
+				// New unit: since every unit is scanned in every sample, it was
+				// created after the previous one and all its usage belongs to
+				// this interval. (If it exceeds what is possible in the interval,
+				// it is an old unit that just entered monitoring, e.g. after the
+				// slices changed.)
 				ss.CPUPercent = 100 * float64(s.CPUUsageUsec) / elapsedUsec / c.numCPU
 			}
 		}
@@ -207,7 +208,7 @@ func (c *Collector) Tick() {
 	}
 }
 
-// Latest devuelve la última muestra y false si todavía no hay ninguna.
+// Latest returns the latest sample, or false if there is none yet.
 func (c *Collector) Latest() (Sample, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -218,21 +219,21 @@ func (c *Collector) Latest() (Sample, bool) {
 	return last[0], true
 }
 
-// History devuelve hasta n muestras, de la más antigua a la más reciente.
+// History returns up to n samples, oldest first.
 func (c *Collector) History(n int) []Sample {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.history.Last(n)
 }
 
-// Services devuelve el uso de los servicios en la última muestra.
+// Services returns the units' usage in the latest sample.
 func (c *Collector) Services() []ServiceSample {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return append([]ServiceSample(nil), c.services...)
 }
 
-// Label devuelve el nombre legible, o el de la unidad si no hay otro.
+// Label returns the readable name, or the unit name if there is none.
 func (s ServiceSample) Label() string {
 	if s.Display != "" {
 		return s.Display
@@ -240,8 +241,8 @@ func (s ServiceSample) Label() string {
 	return s.Name
 }
 
-// Grouped une las unidades del mismo tipo y nombre legible (p. ej. dos
-// unidades de una misma aplicación), sumando su consumo. El orden se conserva.
+// Grouped merges units of the same kind and readable name (e.g. two units of
+// the same application), adding up their usage. Order is preserved.
 func Grouped(in []ServiceSample) []ServiceSample {
 	idx := map[string]int{}
 	var out []ServiceSample
@@ -262,7 +263,7 @@ func Grouped(in []ServiceSample) []ServiceSample {
 		if o.MemMax > 0 && s.MemMax > 0 {
 			o.MemMax += s.MemMax
 		} else {
-			o.MemMax = 0 // si alguna no tiene límite, el conjunto tampoco
+			o.MemMax = 0 // if any member has no limit, neither does the group
 		}
 	}
 	return out

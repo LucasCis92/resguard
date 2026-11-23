@@ -1,10 +1,13 @@
-// resguardd es el demonio que vigila los recursos del sistema y de los servicios.
+// resguardd is the daemon that monitors the resources of the system and its
+// services.
 //
-// Los umbrales, intervalos y servicios vigilados se leen de un archivo YAML
-// (por defecto /etc/resguard/config.yaml) que se recarga con SIGHUP
-// (systemctl reload resguard). Las opciones de línea de órdenes equivalentes,
-// si se indican, tienen prioridad sobre el archivo; están pensadas para el
-// desarrollo.
+// Thresholds, intervals and monitored units are read from a YAML file (by
+// default /etc/resguard/config.yaml) that is reloaded on SIGHUP (systemctl
+// reload resguard). The equivalent command-line flags, when given, take
+// precedence over the file; they are meant for development.
+//
+// The daemon's own output (logs, -check-config) is always English; the text
+// it sends to resguardctl follows each client's language.
 package main
 
 import (
@@ -23,13 +26,14 @@ import (
 	"github.com/LucasCis92/resguard/internal/config"
 	"github.com/LucasCis92/resguard/internal/daemon"
 	"github.com/LucasCis92/resguard/internal/events"
+	"github.com/LucasCis92/resguard/internal/i18n"
 	"github.com/LucasCis92/resguard/internal/ipc"
 	"github.com/LucasCis92/resguard/internal/metrics"
 	"github.com/LucasCis92/resguard/internal/units"
 	"github.com/LucasCis92/resguard/internal/version"
 )
 
-// options son los ajustes de despliegue, que solo se cambian reiniciando.
+// options are deployment settings, which only change on restart.
 type options struct {
 	socket, group, eventsFile string
 	bus                       units.Bus
@@ -39,26 +43,26 @@ func main() {
 	var (
 		opts       options
 		bus        string
-		configPath = flag.String("config", config.DefaultPath, "archivo de configuración")
-		checkOnly  = flag.Bool("check-config", false, "valida la configuración, la muestra y sale")
+		configPath = flag.String("config", config.DefaultPath, "configuration file")
+		checkOnly  = flag.Bool("check-config", false, "validate the configuration, print it and exit")
 	)
-	flag.StringVar(&opts.socket, "socket", ipc.DefaultSocketPath, "ruta del socket Unix")
-	flag.StringVar(&opts.group, "group", "", "grupo propietario del socket (sus miembros pueden usar la CLI)")
-	flag.StringVar(&opts.eventsFile, "events-file", "", "fichero JSON Lines donde guardar las incidencias (vacío: solo en memoria y log)")
-	flag.StringVar(&bus, "systemd", "system", "instancia de systemd a vigilar: system, user u off")
+	flag.StringVar(&opts.socket, "socket", ipc.DefaultSocketPath, "Unix socket path")
+	flag.StringVar(&opts.group, "group", "", "group owning the socket (its members can use the CLI)")
+	flag.StringVar(&opts.eventsFile, "events-file", "", "JSON Lines file to append incidents to (empty: memory and log only)")
+	flag.StringVar(&bus, "systemd", "system", "systemd instance to watch: system, user or off")
 
-	// Equivalentes a claves del archivo de configuración; si se indican, mandan sobre él.
+	// Equivalent to keys of the configuration file; when given, they win over it.
 	def := config.Default()
-	interval := flag.Duration("interval", def.Interval, "periodo de muestreo (sobrescribe interval)")
-	history := flag.Duration("history", def.History, "historial a conservar en memoria (sobrescribe history)")
-	slices := flag.String("slices", strings.Join(def.Services.Slices, ","), "slices de cgroups, separados por comas (sobrescribe services.slices)")
+	interval := flag.Duration("interval", def.Interval, "sampling period (overrides interval)")
+	history := flag.Duration("history", def.History, "history to keep in memory (overrides history)")
+	slices := flag.String("slices", strings.Join(def.Services.Slices, ","), "comma-separated cgroup slices (overrides services.slices)")
 	th := def.Thresholds
-	flag.Float64Var(&th.CPU, "cpu-threshold", th.CPU, "umbral de CPU en % (sobrescribe thresholds.cpu)")
-	flag.Float64Var(&th.Memory, "mem-threshold", th.Memory, "umbral de memoria en % (sobrescribe thresholds.memory)")
-	flag.Float64Var(&th.PSICPU, "psi-cpu-threshold", th.PSICPU, "umbral de PSI cpu (sobrescribe thresholds.psi_cpu)")
-	flag.Float64Var(&th.PSIMemory, "psi-mem-threshold", th.PSIMemory, "umbral de PSI memory (sobrescribe thresholds.psi_memory)")
-	flag.Float64Var(&th.PSIIO, "psi-io-threshold", th.PSIIO, "umbral de PSI io (sobrescribe thresholds.psi_io)")
-	flag.IntVar(&th.Sustain, "sustain", th.Sustain, "muestras seguidas sobre el umbral (sobrescribe thresholds.sustain)")
+	flag.Float64Var(&th.CPU, "cpu-threshold", th.CPU, "CPU threshold in % (overrides thresholds.cpu)")
+	flag.Float64Var(&th.Memory, "mem-threshold", th.Memory, "memory threshold in % (overrides thresholds.memory)")
+	flag.Float64Var(&th.PSICPU, "psi-cpu-threshold", th.PSICPU, "PSI cpu threshold (overrides thresholds.psi_cpu)")
+	flag.Float64Var(&th.PSIMemory, "psi-mem-threshold", th.PSIMemory, "PSI memory threshold (overrides thresholds.psi_memory)")
+	flag.Float64Var(&th.PSIIO, "psi-io-threshold", th.PSIIO, "PSI io threshold (overrides thresholds.psi_io)")
+	flag.IntVar(&th.Sustain, "sustain", th.Sustain, "consecutive samples above the threshold (overrides thresholds.sustain)")
 	flag.Parse()
 	opts.bus = units.Bus(bus)
 
@@ -81,8 +85,8 @@ func main() {
 		set("sustain", func() { c.Thresholds.Sustain = th.Sustain })
 	}
 
-	// Si se pidió un archivo concreto con -config, su ausencia es un error;
-	// la ruta por defecto, en cambio, es opcional.
+	// A file requested explicitly with -config must exist; the default path
+	// is optional.
 	loader := func() (loadedConfig, error) {
 		cfg, found, err := config.Load(*configPath, !explicit["config"])
 		if err != nil {
@@ -98,14 +102,14 @@ func main() {
 	if *checkOnly {
 		lc, err := loader()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Configuración inválida:", err)
+			fmt.Fprintln(os.Stderr, "Invalid configuration:", err)
 			os.Exit(1)
 		}
-		fmt.Println(lc.describe())
+		fmt.Println(lc.describe(i18n.New(i18n.English)))
 		return
 	}
 
-	// Bajo systemd, stderr va al journal, que ya añade la hora a cada línea.
+	// Under systemd, stderr goes to the journal, which already timestamps every line.
 	var hopts slog.HandlerOptions
 	if stderrIsJournal() {
 		hopts.ReplaceAttr = func(groups []string, a slog.Attr) slog.Attr {
@@ -117,15 +121,15 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &hopts))
 	if err := run(log, opts, loader); err != nil {
-		log.Error("el demonio terminó con error", "err", err)
+		log.Error("the daemon exited with an error", "err", err)
 		os.Exit(1)
 	}
 }
 
-// stderrIsJournal indica si stderr está conectado al journal. JOURNAL_STREAM
-// lo heredan también los procesos lanzados desde un servicio (p. ej. una
-// terminal de VS Code), así que se compara con el dispositivo e inodo reales
-// de stderr, como recomienda systemd.
+// stderrIsJournal reports whether stderr is connected to the journal.
+// JOURNAL_STREAM is also inherited by processes started from a service (e.g. a
+// VS Code terminal), so it is compared with stderr's actual device and inode,
+// as systemd recommends.
 func stderrIsJournal() bool {
 	var dev, ino uint64
 	if _, err := fmt.Sscanf(os.Getenv("JOURNAL_STREAM"), "%d:%d", &dev, &ino); err != nil {
@@ -138,7 +142,7 @@ func stderrIsJournal() bool {
 	return uint64(st.Dev) == dev && uint64(st.Ino) == ino
 }
 
-// loadedConfig es una configuración junto con su origen.
+// loadedConfig is a configuration together with its origin.
 type loadedConfig struct {
 	config.Config
 	path   string
@@ -146,17 +150,17 @@ type loadedConfig struct {
 	loaded time.Time
 }
 
-func (lc loadedConfig) describe() string {
+func (lc loadedConfig) describe(p i18n.Printer) string {
 	var header string
 	if lc.found {
-		header = fmt.Sprintf("# Archivo: %s (cargado el %s)", lc.path, lc.loaded.Format("2006-01-02 15:04:05"))
+		header = p.T("# File: %s (loaded on %s)", lc.path, lc.loaded.Format("2006-01-02 15:04:05"))
 	} else {
-		header = fmt.Sprintf("# %s no existe: se usan los valores por defecto", lc.path)
+		header = p.T("# %s does not exist: using the default values", lc.path)
 	}
 	return header + "\n" + lc.YAML()
 }
 
-// current guarda la configuración en uso; la leen varias goroutines.
+// current holds the configuration in use; several goroutines read it.
 type current struct {
 	mu sync.RWMutex
 	lc loadedConfig
@@ -178,12 +182,12 @@ func run(log *slog.Logger, opts options, loader func() (loadedConfig, error)) er
 	switch opts.bus {
 	case units.SystemBus, units.UserBus, "off":
 	default:
-		return fmt.Errorf("valor inválido para -systemd: %q (system, user u off)", opts.bus)
+		return fmt.Errorf("invalid value for -systemd: %q (system, user or off)", opts.bus)
 	}
 
 	lc, err := loader()
 	if err != nil {
-		return fmt.Errorf("configuración inválida: %w", err)
+		return fmt.Errorf("invalid configuration: %w", err)
 	}
 	cur := &current{lc: lc}
 	ignored := func(service string) bool { return cur.get().Ignored(service) }
@@ -207,11 +211,11 @@ func run(log *slog.Logger, opts options, loader func() (loadedConfig, error)) er
 	registerCommands(srv, col, store, cur)
 
 	if lc.found {
-		log.Info("configuración cargada", "path", lc.path)
+		log.Info("configuration loaded", "path", lc.path)
 	} else {
-		log.Info("sin archivo de configuración; se usan los valores por defecto", "path", lc.path)
+		log.Info("no configuration file; using the default values", "path", lc.path)
 	}
-	log.Info("iniciando resguardd", "version", version.Version, "interval", lc.Interval,
+	log.Info("starting resguardd", "version", version.Version, "interval", lc.Interval,
 		"slices", lc.Services.Slices, "events_file", opts.eventsFile, "systemd", opts.bus)
 
 	go col.Run(ctx)
@@ -234,12 +238,12 @@ func run(log *slog.Logger, opts options, loader func() (loadedConfig, error)) er
 	if err := srv.Run(ctx); err != nil {
 		return err
 	}
-	log.Info("resguardd detenido")
+	log.Info("resguardd stopped")
 	return nil
 }
 
-// reloadOnSIGHUP relee la configuración con cada SIGHUP. Si la nueva no es
-// válida, se registra el error y se mantiene la anterior.
+// reloadOnSIGHUP reloads the configuration on every SIGHUP. If the new one is
+// invalid, the error is logged and the previous one is kept.
 func reloadOnSIGHUP(ctx context.Context, log *slog.Logger, loader func() (loadedConfig, error), apply func(loadedConfig)) {
 	hup := make(chan os.Signal, 1)
 	signal.Notify(hup, syscall.SIGHUP)
@@ -251,11 +255,11 @@ func reloadOnSIGHUP(ctx context.Context, log *slog.Logger, loader func() (loaded
 		case <-hup:
 			lc, err := loader()
 			if err != nil {
-				log.Error("la configuración nueva no es válida; se mantiene la anterior", "err", err)
+				log.Error("the new configuration is invalid; keeping the previous one", "err", err)
 				continue
 			}
 			apply(lc)
-			log.Info("configuración recargada", "path", lc.path, "found", lc.found,
+			log.Info("configuration reloaded", "path", lc.path, "found", lc.found,
 				"interval", lc.Interval, "history", lc.History, "thresholds", fmt.Sprintf("%+v", lc.Thresholds),
 				"slices", lc.Services.Slices, "ignore", lc.Services.Ignore)
 		}

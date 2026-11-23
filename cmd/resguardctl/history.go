@@ -7,18 +7,19 @@ import (
 	"strings"
 )
 
-// history guarda las órdenes escritas en el modo interactivo para recuperarlas
-// con las flechas, también entre sesiones. Implementa term.History.
+// history keeps the commands typed in interactive mode so they can be
+// recalled with the arrow keys, also across sessions. It implements
+// term.History.
 //
-// El fichero es privado del usuario (0600, en un directorio 0700) y, como en
-// bash, las líneas que empiezan por espacio no se guardan.
+// The file is private to the user (0600, in a 0700 directory) and, as in
+// bash, lines starting with a space are not saved.
 type history struct {
-	entries []string // de la más antigua a la más reciente
+	entries []string // oldest first
 	max     int
-	path    string // vacío: solo en memoria
+	path    string // empty: memory only
 }
 
-// historyPath devuelve $XDG_STATE_HOME/resguard/history o
+// historyPath returns $XDG_STATE_HOME/resguard/history or
 // ~/.local/state/resguard/history.
 func historyPath() string {
 	dir := os.Getenv("XDG_STATE_HOME")
@@ -32,8 +33,8 @@ func historyPath() string {
 	return filepath.Join(dir, "resguard", "history")
 }
 
-// loadHistory carga el historial de path. Si no se puede leer o crear, el
-// historial funciona igual pero solo en memoria.
+// loadHistory loads the history from path. If it cannot be read or created,
+// the history still works, in memory only.
 func loadHistory(path string, max int) *history {
 	h := &history{max: max, path: path}
 	if path == "" {
@@ -55,12 +56,12 @@ func loadHistory(path string, max int) *history {
 	return h
 }
 
-// Add añade una entrada. La llama term.Terminal con cada línea leída.
+// Add adds an entry. term.Terminal calls it for every line read.
 func (h *history) Add(entry string) {
 	if strings.TrimSpace(entry) == "" || strings.HasPrefix(entry, " ") {
 		return
 	}
-	entry = strings.TrimRight(entry, " \t") // el autocompletado deja un espacio final
+	entry = strings.TrimRight(entry, " \t") // completion leaves a trailing space
 	if n := len(h.entries); n > 0 && h.entries[n-1] == entry {
 		return
 	}
@@ -71,10 +72,10 @@ func (h *history) Add(entry string) {
 	h.append(entry)
 }
 
-// Len devuelve el número de entradas.
+// Len returns the number of entries.
 func (h *history) Len() int { return len(h.entries) }
 
-// At devuelve una entrada; 0 es la más reciente.
+// At returns an entry; 0 is the most recent.
 func (h *history) At(idx int) string { return h.entries[len(h.entries)-1-idx] }
 
 func (h *history) append(entry string) {

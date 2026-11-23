@@ -1,62 +1,68 @@
-.TH RESGUARDD 8 "noviembre de 2026" "resguard" "Administración del sistema"
-.SH NOMBRE
-resguardd \- demonio de monitorización de recursos y registro de incidencias
-.SH SINOPSIS
+.TH RESGUARDD 8 "November 2026" "resguard" "System Administration"
+.SH NAME
+resguardd \- resource monitoring and incident recording daemon
+.SH SYNOPSIS
 .B resguardd
-.RI [ opciones ]
+.RI [ options ]
 .br
 .B resguardd \-check\-config
 .RB [ \-config
-.IR archivo ]
-.SH DESCRIPCIÓN
+.IR file ]
+.SH DESCRIPTION
 .B resguardd
-toma muestras periódicas de CPU, memoria, swap, carga y presión (PSI) del sistema
-y del consumo de cada servicio, aplicación de escritorio y contenedor (cgroups v2).
-Registra como incidencias los picos de recursos, los OOM kills y las caídas de
-servicios notificadas por systemd, junto con el estado del sistema en ese momento.
+periodically samples the system's CPU, memory, swap, load and pressure (PSI) and
+the usage of every service, desktop application and container (cgroups v2). It
+records resource peaks, OOM kills and service failures reported by systemd as
+incidents, together with the system state at that moment.
 .PP
-Normalmente lo arranca systemd
+systemd normally starts it
 .RB ( resguard.service );
-no hace falta ejecutarlo a mano. Se consulta con
+there is no need to run it by hand. Query it with
 .BR resguardctl (1).
-Si ya hay una copia en marcha, una segunda se niega a arrancar.
-.SH OPCIONES
+If a copy is already running, a second one refuses to start.
+.PP
+The daemon's logs and the output of
+.B \-check\-config
+are always in English; the text it sends to
+.BR resguardctl (1)
+follows each user's language.
+.SH OPTIONS
 .TP
-.BI \-config " archivo"
-Archivo de configuración (por defecto
+.BI \-config " file"
+Configuration file (default
 .IR /etc/resguard/config.yaml ;
-si no existe se usan los valores por defecto).
+if it does not exist, the defaults are used).
 .TP
 .B \-check\-config
-Valida la configuración, muestra la que resultaría y termina. Devuelve 1 si no es válida.
+Validate the configuration, print the resulting one and exit. Returns 1 if it is invalid.
 .TP
-.BI \-socket " ruta"
-Socket Unix para la CLI (por defecto
+.BI \-socket " path"
+Unix socket for the CLI (default
 .IR /run/resguard/resguard.sock ).
 .TP
-.BI \-group " grupo"
-Grupo propietario del socket; sus miembros pueden usar la CLI sin ser root.
+.BI \-group " group"
+Group owning the socket; its members can use the CLI without being root.
 .TP
-.BI \-events\-file " archivo"
-Archivo JSON Lines donde se añaden las incidencias.
+.BI \-events\-file " file"
+JSON Lines file incidents are appended to.
 .TP
 .BR \-systemd " system|user|off"
-Instancia de systemd cuyas caídas de servicios se vigilan.
+systemd instance whose service failures are watched.
 .PP
-Las opciones
+The options
 .BR \-interval ", " \-history ", " \-slices ", " \-cpu\-threshold ", " \-mem\-threshold ,
-.BR \-psi\-cpu\-threshold ", " \-psi\-mem\-threshold ", " \-psi\-io\-threshold " y " \-sustain
-equivalen a claves del archivo de configuración y tienen prioridad sobre él; están
-pensadas para el desarrollo.
-.SH CONFIGURACIÓN
-El archivo YAML admite
+.BR \-psi\-cpu\-threshold ", " \-psi\-mem\-threshold ", " \-psi\-io\-threshold " and " \-sustain
+are equivalent to keys of the configuration file and take precedence over it;
+they are meant for development.
+.SH CONFIGURATION
+The YAML file accepts
 .BR interval ", " history ,
 .B thresholds
 .RB ( cpu ", " memory ", " psi_cpu ", " psi_memory ", " psi_io ", " sustain )
-y
+and
 .B services
 .RB ( slices ", " ignore ).
-El archivo instalado documenta cada clave. Tras editarlo:
+The installed file documents every key. After editing it:
 .PP
 .RS
 .B sudo resguardd \-check\-config
@@ -64,27 +70,27 @@ El archivo instalado documenta cada clave. Tras editarlo:
 .B sudo systemctl reload resguard
 .RE
 .PP
-La recarga (SIGHUP) conserva el historial y los picos en curso. Si el archivo no
-es válido, se mantiene la configuración anterior y se registra el error. Por
-seguridad, el archivo se rechaza si otros usuarios pueden modificarlo.
-.SH SEÑALES
+Reloading (SIGHUP) keeps the history and the ongoing peaks. If the file is
+invalid, the previous configuration is kept and the error is logged. For
+security, the file is rejected if other users can modify it.
+.SH SIGNALS
 .TP
 .B SIGHUP
-Recarga la configuración.
+Reload the configuration.
 .TP
 .BR SIGTERM ", " SIGINT
-Termina ordenadamente.
-.SH ARCHIVOS
+Exit cleanly.
+.SH FILES
 .TP
 .I /etc/resguard/config.yaml
-Configuración.
+Configuration.
 .TP
 .I /var/lib/resguard/events.jsonl
-Registro de incidencias, una por línea en JSON (solo legible por root).
+Incident log, one per line in JSON (readable only by root).
 .TP
 .I /run/resguard/resguard.sock
-Socket de la CLI.
-.SH VÉASE TAMBIÉN
+CLI socket.
+.SH SEE ALSO
 .BR resguardctl (1),
 .BR systemd.resource\-control (5),
 .BR journalctl (1)

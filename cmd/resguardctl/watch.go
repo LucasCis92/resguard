@@ -15,25 +15,26 @@ import (
 
 	"github.com/LucasCis92/resguard/internal/collector"
 	"github.com/LucasCis92/resguard/internal/events"
+	"github.com/LucasCis92/resguard/internal/i18n"
 	"github.com/LucasCis92/resguard/internal/ipc"
 	"github.com/LucasCis92/resguard/internal/metrics"
 )
 
-// watch muestra una vista en vivo a pantalla completa hasta que se pulsa q.
-// Tiene dos modos: la lista de servicios, aplicaciones y contenedores, y los
-// procesos de uno de ellos. alreadyRaw indica que la terminal ya está en modo
-// raw (dentro del REPL).
+// watch shows a full-screen live view until q is pressed. It has two modes:
+// the list of services, applications and containers, and the processes of
+// one of them. alreadyRaw says the terminal is already in raw mode (inside
+// the REPL).
 func watch(s *session, args []string, alreadyRaw bool) error {
 	in, out := int(os.Stdin.Fd()), int(os.Stdout.Fd())
 	if !term.IsTerminal(in) || !term.IsTerminal(out) {
-		return errors.New("watch necesita una terminal interactiva")
+		return errors.New(s.p.T("watch needs an interactive terminal"))
 	}
 
 	var interval time.Duration
 	if len(args) > 0 {
 		secs, err := strconv.ParseFloat(args[0], 64)
 		if err != nil || secs < 0.5 || secs > 3600 {
-			return fmt.Errorf("intervalo inválido %q: indica segundos entre 0.5 y 3600", args[0])
+			return errors.New(s.p.T("invalid interval %q: give seconds between 0.5 and 3600", args[0]))
 		}
 		interval = time.Duration(secs * float64(time.Second))
 	}
@@ -46,16 +47,16 @@ func watch(s *session, args []string, alreadyRaw bool) error {
 		defer term.Restore(in, old)
 	}
 
-	// Pantalla alternativa: al salir, la terminal vuelve a estar como antes.
+	// Alternate screen: on exit, the terminal is left as it was.
 	os.Stdout.WriteString("\x1b[?1049h\x1b[?25l")
 	defer os.Stdout.WriteString("\x1b[?25h\x1b[?1049l")
 
 	st := newWatchState()
-	v := view{color: useColor(), refresh: 2 * time.Second}
+	v := view{color: useColor(), refresh: 2 * time.Second, p: s.p}
 	var (
 		snap    ipc.Snapshot
 		snapErr error
-		next    time.Time // próxima consulta al demonio
+		next    time.Time // next query to the daemon
 	)
 	for {
 		if !time.Now().Before(next) {
@@ -71,7 +72,7 @@ func watch(s *session, args []string, alreadyRaw bool) error {
 			if st.mode == modeProcs {
 				st.updateProcs(fetchProcesses(s, st.target.Units))
 				if st.measuring() {
-					wait = min(wait, time.Second) // la primera medida de CPU necesita dos lecturas
+					wait = min(wait, time.Second) // the first CPU measurement needs two readings
 				}
 			}
 			next = time.Now().Add(wait)
@@ -93,7 +94,7 @@ func watch(s *session, args []string, alreadyRaw bool) error {
 			case actionQuit:
 				return nil
 			case actionRefresh:
-				next = time.Time{} // consultar ya (p. ej. al abrir la vista de procesos)
+				next = time.Time{} // query now (e.g. when opening the process view)
 			}
 		}
 	}
@@ -136,9 +137,9 @@ const (
 	keyHome
 	keyEnd
 	keyEnter
-	keyBack // Retroceso o flecha izquierda
+	keyBack // Backspace or left arrow
 	keyEsc
-	keyQuit // Ctrl+C o Ctrl+D
+	keyQuit // Ctrl+C or Ctrl+D
 )
 
 type keypress struct {
@@ -146,8 +147,8 @@ type keypress struct {
 	r    rune
 }
 
-// parseKeys interpreta lo leído del teclado en modo raw, incluidas las
-// secuencias de escape de las flechas y las teclas de página.
+// parseKeys decodes keyboard input read in raw mode, including the escape
+// sequences of the arrow and page keys.
 func parseKeys(b []byte) []keypress {
 	if len(b) == 1 && b[0] == 27 {
 		return []keypress{{code: keyEsc}}
@@ -199,10 +200,10 @@ func parseKeys(b []byte) []keypress {
 	return out
 }
 
-// readKeys espera hasta d a que se pulse algo. Usa poll en vez de una
-// goroutine lectora para no dejar a nadie leyendo stdin al volver al modo
-// interactivo. Devuelve una lista vacía si se agotó el tiempo o la ventana
-// cambió de tamaño (en ambos casos se redibuja).
+// readKeys waits up to d for a key press. It uses poll instead of a reader
+// goroutine so that nothing is left reading stdin when going back to
+// interactive mode. It returns an empty list when the time runs out or the
+// window is resized (both cases redraw).
 func readKeys(fd int, d time.Duration) ([]keypress, error) {
 	if d <= 0 {
 		return nil, nil
@@ -240,26 +241,26 @@ const (
 	actionRefresh
 )
 
-// filters son los filtros por tipo de la vista de unidades.
+// filters are the kind filters of the unit list.
 var filters = map[rune]struct{ kind, label string }{
-	't': {"", "todo"},
-	'a': {metrics.KindApp, "apps"},
-	's': {metrics.KindService, "servicios"},
-	'd': {metrics.KindContainer, "contenedores"},
+	't': {"", i18n.M("all")},
+	'a': {metrics.KindApp, i18n.M("apps")},
+	's': {metrics.KindService, i18n.M("services")},
+	'd': {metrics.KindContainer, i18n.M("containers")},
 }
 
 type watchState struct {
 	mode   watchMode
-	sortBy string // "cpu" o "mem"
-	filter string // tipo de unidad, o "" para todos
-	selKey string // clave (tipo + nombre) de la fila elegida
-	offset int    // primera fila visible
+	sortBy string // "cpu" or "mem"
+	filter string // unit kind, or "" for all
+	selKey string // key (kind + name) of the selected row
+	offset int    // first visible row
 
-	// Vista de procesos.
+	// Process view.
 	target    collector.ServiceSample
 	procs     ipc.ProcessList
 	procsErr  error
-	cpu       map[int]float64 // % de CPU por PID; ausente mientras se mide
+	cpu       map[int]float64 // CPU % per PID; missing while measuring
 	prevTicks map[int]uint64
 	prevTime  time.Time
 	procSort  string
@@ -272,7 +273,7 @@ func newWatchState() *watchState {
 
 func unitKey(s collector.ServiceSample) string { return s.Kind + "\x00" + s.Label() }
 
-// units devuelve las filas de la vista de unidades: agrupadas, filtradas y ordenadas.
+// units returns the rows of the unit list: grouped, filtered and sorted.
 func (st *watchState) units(snap ipc.Snapshot) []collector.ServiceSample {
 	var out []collector.ServiceSample
 	for _, s := range collector.Grouped(snap.Services) {
@@ -289,7 +290,7 @@ func (st *watchState) units(snap ipc.Snapshot) []collector.ServiceSample {
 	return out
 }
 
-// selected devuelve el índice de la fila elegida (0 si ya no existe).
+// selected returns the index of the selected row (0 if it no longer exists).
 func (st *watchState) selected(rows []collector.ServiceSample) int {
 	for i, r := range rows {
 		if unitKey(r) == st.selKey {
@@ -299,7 +300,7 @@ func (st *watchState) selected(rows []collector.ServiceSample) int {
 	return 0
 }
 
-// handle aplica una tecla.
+// handle applies a key press.
 func (st *watchState) handle(k keypress, snap ipc.Snapshot, v view) action {
 	if k.code == keyQuit || k.code == keyRune && (k.r == 'q' || k.r == 'Q') {
 		return actionQuit
@@ -396,11 +397,11 @@ func (st *watchState) openProcs(target collector.ServiceSample) {
 	st.procOff = 0
 }
 
-// measuring indica que aún no hay dos lecturas para calcular la CPU.
+// measuring reports that there are not yet two readings to compute CPU usage.
 func (st *watchState) measuring() bool { return st.prevTicks == nil || len(st.cpu) == 0 }
 
-// updateProcs incorpora una lectura de procesos y calcula el % de CPU de cada
-// uno comparando su tiempo de CPU con la lectura anterior.
+// updateProcs takes in a process reading and computes each process's CPU %
+// by comparing its CPU time with the previous reading.
 func (st *watchState) updateProcs(list ipc.ProcessList, err error) {
 	st.procsErr = err
 	if err != nil {
@@ -422,8 +423,9 @@ func (st *watchState) updateProcs(list ipc.ProcessList, err error) {
 
 // ---------------------------------------------------------------- dibujo
 
-// view son las opciones de presentación de un fotograma.
+// view holds the presentation options of a frame.
 type view struct {
+	p             i18n.Printer
 	width, height int
 	color         bool
 	now           time.Time
@@ -451,7 +453,7 @@ func (v view) paint(code, s string) string {
 	return code + s + ansiReset
 }
 
-// levelColor colorea según la gravedad: verde, amarillo (>=70) o rojo (>=90).
+// levelColor picks a color by level: green, yellow (>=70) or red (>=90).
 func levelColor(pct float64) string {
 	switch {
 	case pct >= 90:
@@ -476,44 +478,45 @@ func (st *watchState) render(snap ipc.Snapshot, snapErr error, v view) string {
 	return st.renderUnits(snap, snapErr, v)
 }
 
-// renderUnits dibuja la vista principal. Cada línea se recorta al ancho de la
-// terminal y se limpia hasta el final, para redibujar sin parpadeos.
+// renderUnits draws the main view. Every line is cut to the terminal width
+// and cleared to its end, to redraw without flicker.
 func (st *watchState) renderUnits(snap ipc.Snapshot, snapErr error, v view) string {
 	var lines []string
 	add := func(format string, a ...any) { lines = append(lines, fmt.Sprintf(format, a...)) }
 
-	add("%s   %s · cada %s · ↑↓ elegir · Enter procesos · a/s/d/t filtrar · c/m ordenar · q salir",
-		v.paint(ansiBold, "resguard"), v.now.Format("15:04:05"), v.refresh)
+	add("%s   %s", v.paint(ansiBold, "resguard"),
+		v.p.T("%s · every %s · ↑↓ select · Enter processes · a/s/d/t filter · c/m sort · q quit", v.now.Format("15:04:05"), v.refresh))
 	add("")
 
 	if snapErr != nil {
-		add("%s %v", v.paint(ansiRed, "Sin datos del demonio:"), snapErr)
-		add("Reintentando…")
+		add("%s %v", v.paint(ansiRed, v.p.T("No data from the daemon:")), snapErr)
+		add("%s", v.p.T("Retrying…"))
 		return finish(lines, v)
 	}
 
 	s := snap.Sample
 	barW := max(10, min(30, v.width-45))
-	add("CPU      %s %5.1f%%   carga %.2f %.2f %.2f", v.bar(s.CPUPercent, barW), s.CPUPercent, s.Load1, s.Load5, s.Load15)
+	label := func(s string) string { return fmt.Sprintf("%-9s", s) }
+	add("%s%s %5.1f%%   %s", label(v.p.T("CPU")), v.bar(s.CPUPercent, barW), s.CPUPercent, v.p.T("load %.2f %.2f %.2f", s.Load1, s.Load5, s.Load15))
 	usedKB := s.MemTotalKB - s.MemAvailableKB
-	add("Memoria  %s %5.1f%%   %s de %s", v.bar(s.MemUsedPercent, barW), s.MemUsedPercent, gib(usedKB), gib(s.MemTotalKB))
-	add("Swap     %s %5.1f%%", v.bar(s.SwapUsedPercent, barW), s.SwapUsedPercent)
+	add("%s%s %5.1f%%   %s", label(v.p.T("Memory")), v.bar(s.MemUsedPercent, barW), s.MemUsedPercent, v.p.T("%s of %s", gib(usedKB), gib(s.MemTotalKB)))
+	add("%s%s %5.1f%%", label(v.p.T("Swap")), v.bar(s.SwapUsedPercent, barW), s.SwapUsedPercent)
 	if s.PSI.Available {
-		add("Presión  cpu %.1f%%   memoria %.1f%%   E/S %.1f%%", s.PSI.CPU.Avg10, s.PSI.Memory.Avg10, s.PSI.IO.Avg10)
+		add("%s%s", label(v.p.T("Pressure")), v.p.T("cpu %.1f%%   memory %.1f%%   I/O %.1f%%", s.PSI.CPU.Avg10, s.PSI.Memory.Avg10, s.PSI.IO.Avg10))
 	} else {
-		add("Presión  no disponible en este kernel")
+		add("%s%s", label(v.p.T("Pressure")), v.p.T("not available on this kernel"))
 	}
 	add("")
 
 	rows := st.units(snap)
-	order := "CPU"
+	order := v.p.T("by CPU")
 	if st.sortBy == "mem" {
-		order = "memoria"
+		order = v.p.T("by memory")
 	}
-	shown := "todo"
+	shown := v.p.T("all")
 	for _, f := range filters {
 		if f.kind == st.filter && f.kind != "" {
-			shown = "solo " + f.label
+			shown = v.p.T("only %s", v.p.T(f.label))
 		}
 	}
 
@@ -521,10 +524,10 @@ func (st *watchState) renderUnits(snap ipc.Snapshot, snapErr error, v view) stri
 	for _, r := range rows {
 		nameW = max(nameW, min(32, utf8.RuneCountInString(r.Label())))
 	}
-	add("%s", v.paint(ansiBold, fmt.Sprintf("  %-*s  %-10s  %6s  %10s  %10s   (por %s · %s)",
-		nameW, "NOMBRE", "TIPO", "CPU%", "MEMORIA", "LÍMITE", order, shown)))
+	add("%s", v.paint(ansiBold, fmt.Sprintf("  %-*s  %-10s  %6s  %10s  %10s   (%s · %s)",
+		nameW, v.p.T("NAME"), v.p.T("KIND"), "CPU%", v.p.T("MEMORY"), v.p.T("LIMIT"), order, shown)))
 
-	// Las incidencias van al pie; las filas ocupan el espacio que queda.
+	// Incidents go at the bottom; the rows take the remaining space.
 	evLines := 2 + max(1, len(snap.Events))
 	visible := max(1, v.height-len(lines)-1-evLines)
 	sel := st.selected(rows)
@@ -542,56 +545,56 @@ func (st *watchState) renderUnits(snap ipc.Snapshot, snapErr error, v view) stri
 		if r.MemMax > 0 {
 			limit = mib(r.MemMax)
 		}
-		line := fmt.Sprintf("%-*s  %-10s  %6.1f  %10s  %10s", nameW, ellipsis(r.Label(), nameW), r.Kind, r.CPUPercent, mib(r.MemBytes), limit)
+		line := fmt.Sprintf("%-*s  %-10s  %6.1f  %10s  %10s", nameW, ellipsis(r.Label(), nameW), events.KindLabel(r.Kind, v.p), r.CPUPercent, mib(r.MemBytes), limit)
 		if i == sel {
-			// El marcador "›" señala la fila también sin colores.
+			// The "›" marker shows the row even without colors.
 			add("%s", v.paint(ansiReverse, "› "+line))
 		} else {
 			add("  %s", line)
 		}
 	}
 	if len(rows) == 0 {
-		add("  (nada que mostrar con este filtro; pulsa t para ver todo)")
+		add("  %s", v.p.T("(nothing to show with this filter; press t to see everything)"))
 	}
 	for len(lines) < v.height-evLines {
 		add("")
 	}
 
-	add("%s", v.paint(ansiBold, "ÚLTIMAS INCIDENCIAS"))
+	add("%s", v.paint(ansiBold, v.p.T("RECENT INCIDENTS")))
 	if len(snap.Events) == 0 {
-		add("Sin incidencias registradas.")
+		add("%s", v.p.T("No incidents recorded."))
 	}
 	for i := len(snap.Events) - 1; i >= 0; i-- {
 		e := snap.Events[i]
-		add("%s  %s  %s", eventTime(e.Time, v.now), severity(v, e.Severity), e.Message)
+		add("%s  %s  %s", eventTime(e.Time, v.now), severity(v, e.Severity), events.Describe(e, v.p))
 	}
 	return finish(lines, v)
 }
 
-// renderProcs dibuja los procesos de la unidad elegida.
+// renderProcs draws the processes of the selected unit.
 func (st *watchState) renderProcs(snap ipc.Snapshot, v view) string {
 	var lines []string
 	add := func(format string, a ...any) { lines = append(lines, fmt.Sprintf(format, a...)) }
 
-	add("%s   %s · cada %s · Esc volver · ↑↓ desplazar · c/m ordenar · q salir",
-		v.paint(ansiBold, "resguard"), v.now.Format("15:04:05"), v.refresh)
+	add("%s   %s", v.paint(ansiBold, "resguard"),
+		v.p.T("%s · every %s · Esc back · ↑↓ scroll · c/m sort · q quit", v.now.Format("15:04:05"), v.refresh))
 	add("")
 
-	// Totales de la unidad según el cgroup (la suma de la memoria de los
-	// procesos contaría varias veces la compartida).
+	// Unit totals come from the cgroup (adding up the processes' memory would
+	// count shared memory several times).
 	cur := st.target
 	for _, r := range collector.Grouped(snap.Services) {
 		if unitKey(r) == unitKey(st.target) {
 			cur = r
 		}
 	}
-	add("%s (%s) · %d procesos · CPU %.1f%% · memoria %s",
-		v.paint(ansiBold, cur.Label()), cur.Kind, len(st.procs.Processes), cur.CPUPercent, mib(cur.MemBytes))
+	add("%s %s", v.paint(ansiBold, cur.Label()), v.p.T("(%s) · %d processes · CPU %.1f%% · memory %s",
+		events.KindLabel(cur.Kind, v.p), len(st.procs.Processes), cur.CPUPercent, mib(cur.MemBytes)))
 	add("")
 
 	if st.procsErr != nil {
-		add("%s %v", v.paint(ansiRed, "No se pudieron leer los procesos:"), st.procsErr)
-		add("Pulsa Esc para volver.")
+		add("%s %v", v.paint(ansiRed, v.p.T("Could not read the processes:")), st.procsErr)
+		add("%s", v.p.T("Press Esc to go back."))
 		return finish(lines, v)
 	}
 
@@ -611,12 +614,12 @@ func (st *watchState) renderProcs(snap ipc.Snapshot, v view) string {
 	for _, p := range procs {
 		userW = max(userW, min(16, utf8.RuneCountInString(p.User)))
 	}
-	order := "CPU"
+	order := v.p.T("by CPU")
 	if st.procSort == "mem" {
-		order = "memoria"
+		order = v.p.T("by memory")
 	}
-	add("%s", v.paint(ansiBold, fmt.Sprintf("%8s  %-*s  %6s  %10s  %6s  %s   (por %s)",
-		"PID", userW, "USUARIO", "CPU%", "MEMORIA", "HILOS", "PROCESO", order)))
+	add("%s", v.paint(ansiBold, fmt.Sprintf("%8s  %-*s  %6s  %10s  %7s  %s   (%s)",
+		"PID", userW, v.p.T("USER"), "CPU%", v.p.T("MEMORY"), v.p.T("THREADS"), v.p.T("PROCESS"), order)))
 
 	visible := max(1, v.height-len(lines)-2)
 	st.procOff = max(0, min(st.procOff, max(0, len(procs)-visible)))
@@ -630,21 +633,21 @@ func (st *watchState) renderProcs(snap ipc.Snapshot, v view) string {
 		if p.Role != "" {
 			name += " — " + p.Role
 		}
-		add("%8d  %-*s  %6s  %10s  %6d  %s", p.PID, userW, ellipsis(p.User, userW), cpu, mib(p.RSSBytes), p.Threads, name)
+		add("%8d  %-*s  %6s  %10s  %7d  %s", p.PID, userW, ellipsis(p.User, userW), cpu, mib(p.RSSBytes), p.Threads, name)
 	}
 	if len(procs) == 0 {
-		add("(sin procesos)")
+		add("%s", v.p.T("(no processes)"))
 	}
 	if rest := len(procs) - (st.procOff + visible); rest > 0 {
-		add("… y %d procesos más (↓ para ver)", rest)
+		add("%s", v.p.T("… and %d more processes (↓ to see them)", rest))
 	}
 
 	for len(lines) < v.height-1 {
 		add("")
 	}
-	note := "CPU% sobre la capacidad total. La memoria de cada proceso incluye la compartida."
+	note := v.p.T("CPU usage is relative to the whole machine. Each process's memory includes shared memory.")
 	if st.measuring() {
-		note = "Midiendo el uso de CPU de cada proceso…"
+		note = v.p.T("Measuring each process's CPU usage…")
 	}
 	add("%s", note)
 	return finish(lines, v)
@@ -661,13 +664,14 @@ func finish(lines []string, v view) string {
 }
 
 func severity(v view, s events.Severity) string {
+	label := fmt.Sprintf("%-8s", events.SeverityLabel(s, v.p))
 	switch s {
 	case events.Critical:
-		return v.paint(ansiRed, "CRÍTICO")
+		return v.paint(ansiRed, label)
 	case events.Warning:
-		return v.paint(ansiYellow, "AVISO  ")
+		return v.paint(ansiYellow, label)
 	default:
-		return "INFO   "
+		return label
 	}
 }
 
@@ -681,8 +685,8 @@ func eventTime(t, now time.Time) string {
 	return t.Format("02/01 15:04")
 }
 
-// truncateANSI recorta s a width caracteres visibles, sin contar las
-// secuencias de escape ANSI ni cortarlas por la mitad.
+// truncateANSI cuts s to width visible characters, without counting ANSI
+// escape sequences or cutting them in half.
 func truncateANSI(s string, width int, colored bool) string {
 	visible := 0
 	for i := 0; i < len(s); {

@@ -11,37 +11,36 @@ import (
 	"strings"
 )
 
-// CgroupRoot es la ruta de la jerarquía unificada de cgroups v2, relativa a Root.
+// CgroupRoot is the path of the cgroup v2 unified hierarchy, relative to Root.
 const CgroupRoot = "sys/fs/cgroup"
 
-// Tipos de unidad que se vigilan.
+// Kinds of monitored units. They are identifiers, not display text.
 const (
-	KindService   = "servicio"   // servicio de systemd (nginx.service)
-	KindApp       = "app"        // aplicación de una sesión de escritorio (Chrome, VS Code)
-	KindContainer = "contenedor" // contenedor Docker o Podman
-	KindSession   = "sesión"     // sesión de inicio (ssh, consola)
-	KindOther     = "otro"       // otros scopes (p. ej. systemd-run --scope)
+	KindService   = "service"   // systemd service (nginx.service)
+	KindApp       = "app"       // desktop session application (Chrome, VS Code)
+	KindContainer = "container" // Docker or Podman container
+	KindSession   = "session"   // login session (ssh, console)
+	KindOther     = "other"     // other scopes (e.g. systemd-run --scope)
 )
 
-// Service son los contadores del cgroup de una unidad de systemd: un servicio,
-// una aplicación de escritorio, un contenedor o una sesión.
+// Service holds the cgroup counters of a systemd unit: a service, a desktop
+// application, a container or a session.
 type Service struct {
-	Name         string // nombre de la unidad, p. ej. "nginx.service" o "app-com.google.Chrome-5016.scope"
-	Display      string // nombre legible, p. ej. "Chrome" o "laravel_app"
-	Kind         string // uno de los Kind*
-	Cgroup       string // ruta del cgroup relativa a la raíz de cgroups
-	MemCurrent   uint64 // bytes en uso (memory.current)
-	MemMax       uint64 // límite en bytes (memory.max); 0 = sin límite
-	CPUUsageUsec uint64 // tiempo de CPU acumulado (cpu.stat usage_usec)
-	OOM          uint64 // veces que se alcanzó el límite y actuó el OOM (memory.events oom)
-	OOMKills     uint64 // procesos matados por el OOM killer (memory.events oom_kill)
+	Name         string // unit name, e.g. "nginx.service" or "app-com.google.Chrome-5016.scope"
+	Display      string // readable, language-neutral name, e.g. "Chrome" or "laravel_app"
+	Kind         string // one of the Kind* constants
+	Cgroup       string // cgroup path relative to the cgroup root
+	MemCurrent   uint64 // bytes in use (memory.current)
+	MemMax       uint64 // limit in bytes (memory.max); 0 = no limit
+	CPUUsageUsec uint64 // cumulative CPU time (cpu.stat usage_usec)
+	OOM          uint64 // times the limit was hit and the OOM killer ran (memory.events oom)
+	OOMKills     uint64 // processes killed by the OOM killer (memory.events oom_kill)
 }
 
-// ReadServices recorre los slices indicados (p. ej. "system.slice" o
-// "user.slice") y devuelve los contadores de cada unidad que encuentre:
-// servicios (también los de slices anidados como system-getty.slice), scopes
-// de aplicaciones y contenedores, y las aplicaciones de las sesiones de
-// usuario (dentro de user@UID.service).
+// ReadServices walks the given slices (e.g. "system.slice" or "user.slice")
+// and returns the counters of every unit it finds: services (including those
+// in nested slices such as system-getty.slice), application and container
+// scopes, and the applications of user sessions (inside user@UID.service).
 func (r *Reader) ReadServices(slices []string) ([]Service, error) {
 	base := r.path(CgroupRoot)
 	var out []Service
@@ -49,7 +48,7 @@ func (r *Reader) ReadServices(slices []string) ([]Service, error) {
 		dir := filepath.Join(base, slice)
 		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				// Un cgroup puede desaparecer mientras lo recorremos.
+				// A cgroup can vanish while we walk it.
 				if errors.Is(err, fs.ErrNotExist) {
 					return nil
 				}
@@ -62,16 +61,16 @@ func (r *Reader) ReadServices(slices []string) ([]Service, error) {
 			rel, _ := filepath.Rel(base, path)
 			switch {
 			case strings.HasSuffix(name, ".slice"):
-				return nil // bajar a los slices anidados
+				return nil // descend into nested slices
 			case strings.HasPrefix(name, "user@") && strings.HasSuffix(name, ".service"):
-				return nil // gestor de una sesión de usuario: sus aplicaciones están dentro
+				return nil // a user session manager: its applications are inside
 			case strings.HasSuffix(name, ".service"), strings.HasSuffix(name, ".scope"):
 				if svc, ok := readService(path, name, rel); ok {
 					svc.Kind = kindOf(name, rel)
 					svc.Display = r.displayName(name, rel, svc.Kind)
 					out = append(out, svc)
 				}
-				return fs.SkipDir // los subcgroups de una unidad no son unidades aparte
+				return fs.SkipDir // a unit's sub-cgroups are not separate units
 			default:
 				return fs.SkipDir
 			}
@@ -84,10 +83,10 @@ func (r *Reader) ReadServices(slices []string) ([]Service, error) {
 	return out, nil
 }
 
-// unifyAppNames da el mismo nombre a las unidades de una misma apertura de
-// una aplicación. GNOME crea a veces dos (app-com.google.Chrome-5016.scope y
-// app-gnome-google\x2dchrome-5016.scope): comparten el sufijo final. Se
-// prefiere el nombre derivado del identificador de la aplicación (Chrome).
+// unifyAppNames gives the same name to the units of a single application
+// launch. GNOME sometimes creates two (app-com.google.Chrome-5016.scope and
+// app-gnome-google\x2dchrome-5016.scope) that share the final suffix. The name
+// derived from the application ID (Chrome) is preferred.
 func unifyAppNames(units []Service) {
 	best := map[string]string{}
 	for _, u := range units {
@@ -106,8 +105,8 @@ func unifyAppNames(units []Service) {
 	}
 }
 
-// launchID devuelve el sufijo numérico de la unidad de una aplicación
-// (el "5016" de app-com.google.Chrome-5016.scope), o "".
+// launchID returns the numeric suffix of an application unit (the "5016" of
+// app-com.google.Chrome-5016.scope), or "".
 func launchID(u Service) string {
 	if u.Kind != KindApp || !strings.HasPrefix(u.Name, "app-") {
 		return ""
@@ -156,7 +155,7 @@ func kindOf(name, rel string) string {
 	}
 }
 
-// displayName calcula un nombre legible para una unidad.
+// displayName computes a readable, language-neutral name for a unit.
 func (r *Reader) displayName(name, rel, kind string) string {
 	switch kind {
 	case KindContainer:
@@ -167,12 +166,12 @@ func (r *Reader) displayName(name, rel, kind string) string {
 		if len(id) > 12 {
 			id = id[:12]
 		}
-		return "contenedor " + id
+		return id
 	case KindSession:
-		return "sesión " + strings.TrimSuffix(strings.TrimPrefix(name, "session-"), ".scope")
+		return strings.TrimSuffix(name, ".scope")
 	case KindApp:
-		// Una pestaña de terminal (vte-spawn-….scope) cuelga de
-		// app-org.gnome.Terminal.slice: se usa el nombre de la aplicación.
+		// A terminal tab (vte-spawn-….scope) hangs from
+		// app-org.gnome.Terminal.slice: use the application's name.
 		if !strings.HasPrefix(name, "app-") {
 			parts := strings.Split(rel, "/")
 			for i := len(parts) - 2; i >= 0; i-- {
@@ -188,8 +187,8 @@ func (r *Reader) displayName(name, rel, kind string) string {
 	}
 }
 
-// appName convierte el nombre de la unidad de una aplicación de escritorio,
-// con el formato app-[<lanzador>-]<id>[-<aleatorio>].scope, en un nombre corto:
+// appName turns the unit name of a desktop application, in the format
+// app-[<launcher>-]<id>[-<random>].scope, into a short name:
 // app-com.google.Chrome-5016.scope → Chrome, app-gnome-code-6255.scope → code.
 func appName(unit string) string {
 	s := unit
@@ -206,12 +205,12 @@ func appName(unit string) string {
 			break
 		}
 	}
-	// Sufijo aleatorio que añade el lanzador (números o hexadecimal).
+	// Random suffix added by the launcher (decimal or hexadecimal).
 	if i := strings.LastIndex(s, "-"); i > 0 && isHex(s[i+1:]) {
 		s = s[:i]
 	}
 	s = unescapeUnit(s)
-	// Identificadores de dominio inverso: com.google.Chrome → Chrome.
+	// Reverse-DNS identifiers: com.google.Chrome → Chrome.
 	if parts := strings.Split(s, "."); len(parts) >= 3 {
 		s = parts[len(parts)-1]
 	}
@@ -233,7 +232,7 @@ func isHex(s string) bool {
 	return true
 }
 
-// unescapeUnit deshace el escapado de systemd: "google\x2dchrome" → "google-chrome".
+// unescapeUnit undoes systemd escaping: "google\x2dchrome" → "google-chrome".
 func unescapeUnit(s string) string {
 	if !strings.Contains(s, `\x`) {
 		return s
@@ -252,8 +251,8 @@ func unescapeUnit(s string) string {
 	return b.String()
 }
 
-// containerName busca el nombre de un contenedor Docker en su configuración
-// (requiere root; si no se puede leer, devuelve ""). Se guarda en caché.
+// containerName looks up a Docker container's name in its configuration
+// (requires root; returns "" if it cannot be read). Results are cached.
 func (r *Reader) containerName(id string) string {
 	if n, ok := r.containerNames[id]; ok {
 		return n
@@ -261,7 +260,7 @@ func (r *Reader) containerName(id string) string {
 	if r.containerNames == nil {
 		r.containerNames = map[string]string{}
 	}
-	if len(r.containerNames) > 1000 { // los contenedores van y vienen: no crecer sin límite
+	if len(r.containerNames) > 1000 { // containers come and go: don't grow without bound
 		r.containerNames = map[string]string{}
 	}
 	name := ""
@@ -286,13 +285,13 @@ func readService(path, name, rel string) (Service, bool) {
 	}
 	svc.CPUUsageUsec = cpu["usage_usec"]
 
-	// El controlador de memoria puede no estar activado para este cgroup.
+	// The memory controller may not be enabled for this cgroup.
 	if ev, err := readKeyValues(filepath.Join(path, "memory.events")); err == nil {
 		svc.OOM = ev["oom"]
 		svc.OOMKills = ev["oom_kill"]
 	}
 	svc.MemCurrent = readUint(filepath.Join(path, "memory.current"))
-	svc.MemMax = readUint(filepath.Join(path, "memory.max")) // "max" se interpreta como 0
+	svc.MemMax = readUint(filepath.Join(path, "memory.max")) // "max" reads as 0
 	return svc, true
 }
 

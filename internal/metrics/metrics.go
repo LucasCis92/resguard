@@ -1,7 +1,7 @@
-// Package metrics lee métricas del sistema desde /proc y /sys/fs/cgroup.
+// Package metrics reads system metrics from /proc and /sys/fs/cgroup.
 //
-// Las lecturas son "en bruto" (contadores acumulados); los porcentajes que
-// necesitan dos muestras, como el uso de CPU, se calculan con funciones aparte.
+// Readings are raw (cumulative counters); percentages that need two samples,
+// such as CPU usage, are computed by separate functions.
 package metrics
 
 import (
@@ -16,35 +16,34 @@ import (
 	"time"
 )
 
-// Reader lee métricas a partir de una raíz del sistema de ficheros.
-// En producción la raíz es "/"; en los tests apunta a testdata.
-// No es seguro para uso concurrente.
+// Reader reads metrics below a filesystem root. In production the root is
+// "/"; tests point it at a fake tree. It is not safe for concurrent use.
 type Reader struct {
 	Root string
 
-	containerNames map[string]string // caché id → nombre de contenedor
-	userNames      map[string]string // caché uid → nombre de usuario
+	containerNames map[string]string // cache: id → container name
+	userNames      map[string]string // cache: uid → user name
 }
 
-// NewReader devuelve un lector sobre el sistema real.
+// NewReader returns a reader for the real system.
 func NewReader() *Reader { return &Reader{Root: "/"} }
 
 func (r *Reader) path(p string) string { return filepath.Join(r.Root, p) }
 
-// CPUTimes son los contadores acumulados de la línea "cpu" de /proc/stat, en ticks.
+// CPUTimes are the cumulative counters of the "cpu" line of /proc/stat, in ticks.
 type CPUTimes struct {
 	User, Nice, System, Idle, IOWait, IRQ, SoftIRQ, Steal uint64
 }
 
-// Total devuelve la suma de todos los contadores.
+// Total returns the sum of all counters.
 func (c CPUTimes) Total() uint64 {
 	return c.User + c.Nice + c.System + c.Idle + c.IOWait + c.IRQ + c.SoftIRQ + c.Steal
 }
 
-// IdleTotal devuelve el tiempo ocioso (incluida la espera de E/S).
+// IdleTotal returns the idle time, including I/O wait.
 func (c CPUTimes) IdleTotal() uint64 { return c.Idle + c.IOWait }
 
-// CPUPercent calcula el uso de CPU entre dos lecturas.
+// CPUPercent computes CPU usage between two readings.
 func CPUPercent(prev, cur CPUTimes) float64 {
 	total := float64(cur.Total()) - float64(prev.Total())
 	idle := float64(cur.IdleTotal()) - float64(prev.IdleTotal())
@@ -55,21 +54,22 @@ func CPUPercent(prev, cur CPUTimes) float64 {
 	return clamp(p, 0, 100)
 }
 
-// Pressure es una línea de /proc/pressure/* (PSI).
+// Pressure is one line of /proc/pressure/* (PSI).
 type Pressure struct {
 	Avg10, Avg60, Avg300 float64
 }
 
-// PSI agrupa la presión "some" de CPU, memoria y E/S, y la "full" de memoria y E/S.
-// "some": porcentaje de tiempo en que al menos una tarea estuvo bloqueada por el recurso.
-// "full": porcentaje de tiempo en que todas las tareas no ociosas lo estuvieron.
+// PSI groups the "some" pressure of CPU, memory and I/O and the "full"
+// pressure of memory and I/O.
+// "some": share of time in which at least one task was stalled on the resource.
+// "full": share of time in which all non-idle tasks were.
 type PSI struct {
 	Available          bool
 	CPU, Memory, IO    Pressure // some
 	MemoryFull, IOFull Pressure // full
 }
 
-// System es una foto del estado general del sistema.
+// System is a snapshot of the overall system state.
 type System struct {
 	Time                 time.Time
 	CPU                  CPUTimes
@@ -81,7 +81,7 @@ type System struct {
 	PSI                  PSI
 }
 
-// MemUsedPercent devuelve el porcentaje de memoria en uso.
+// MemUsedPercent returns the percentage of memory in use.
 func (s System) MemUsedPercent() float64 {
 	if s.MemTotalKB == 0 {
 		return 0
@@ -89,7 +89,7 @@ func (s System) MemUsedPercent() float64 {
 	return 100 * float64(s.MemTotalKB-s.MemAvailableKB) / float64(s.MemTotalKB)
 }
 
-// SwapUsedPercent devuelve el porcentaje de swap en uso.
+// SwapUsedPercent returns the percentage of swap in use.
 func (s System) SwapUsedPercent() float64 {
 	if s.SwapTotalKB == 0 {
 		return 0
@@ -97,7 +97,7 @@ func (s System) SwapUsedPercent() float64 {
 	return 100 * float64(s.SwapTotalKB-s.SwapFreeKB) / float64(s.SwapTotalKB)
 }
 
-// ReadSystem toma una foto del estado general del sistema.
+// ReadSystem takes a snapshot of the overall system state.
 func (r *Reader) ReadSystem() (System, error) {
 	s := System{Time: time.Now()}
 	var err error
@@ -111,7 +111,7 @@ func (r *Reader) ReadSystem() (System, error) {
 	if err = r.readMem(&s); err != nil {
 		return s, err
 	}
-	// PSI es opcional: puede no existir en kernels antiguos o con psi=0.
+	// PSI is optional: it may be missing on old kernels or with psi=0.
 	s.PSI, err = r.readPSI()
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return s, err
@@ -136,7 +136,7 @@ func (r *Reader) readCPU() (CPUTimes, error) {
 		vals := make([]uint64, 8)
 		for i := range vals {
 			if vals[i], err = strconv.ParseUint(fields[i+1], 10, 64); err != nil {
-				return c, fmt.Errorf("interpretando /proc/stat: %w", err)
+				return c, fmt.Errorf("parsing /proc/stat: %w", err)
 			}
 		}
 		return CPUTimes{vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7]}, nil
@@ -144,7 +144,7 @@ func (r *Reader) readCPU() (CPUTimes, error) {
 	if err := sc.Err(); err != nil {
 		return c, err
 	}
-	return c, errors.New("interpretando /proc/stat: falta la línea cpu")
+	return c, errors.New("parsing /proc/stat: missing cpu line")
 }
 
 func (r *Reader) readLoad(s *System) error {
@@ -153,7 +153,7 @@ func (r *Reader) readLoad(s *System) error {
 		return err
 	}
 	if _, err := fmt.Sscanf(string(data), "%f %f %f", &s.Load1, &s.Load5, &s.Load15); err != nil {
-		return fmt.Errorf("interpretando /proc/loadavg: %w", err)
+		return fmt.Errorf("parsing /proc/loadavg: %w", err)
 	}
 	return nil
 }
@@ -168,7 +168,7 @@ func (r *Reader) readMem(s *System) error {
 	s.SwapTotalKB = vals["SwapTotal:"]
 	s.SwapFreeKB = vals["SwapFree:"]
 	if s.MemTotalKB == 0 {
-		return errors.New("interpretando /proc/meminfo: falta MemTotal")
+		return errors.New("parsing /proc/meminfo: missing MemTotal")
 	}
 	return nil
 }
@@ -189,7 +189,7 @@ func (r *Reader) readPSI() (PSI, error) {
 	return p, nil
 }
 
-// readPressure interpreta un fichero PSI con líneas "some ..." y "full ...".
+// readPressure parses a PSI file with "some ..." and "full ..." lines.
 func readPressure(path string) (some, full Pressure, err error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -229,8 +229,8 @@ func readPressure(path string) (some, full Pressure, err error) {
 	return some, full, nil
 }
 
-// readKeyValues lee ficheros con formato "clave valor [unidad]" por línea,
-// como /proc/meminfo, memory.events o cpu.stat.
+// readKeyValues reads files with one "key value [unit]" per line, such as
+// /proc/meminfo, memory.events or cpu.stat.
 func readKeyValues(path string) (map[string]uint64, error) {
 	f, err := os.Open(path)
 	if err != nil {

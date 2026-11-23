@@ -1,14 +1,14 @@
 package collector
 
-// Ring es un búfer circular de capacidad fija: al llenarse, cada elemento
-// nuevo sustituye al más antiguo. No es seguro para uso concurrente.
+// Ring is a fixed-capacity circular buffer: once full, each new element
+// replaces the oldest one. It is not safe for concurrent use.
 type Ring[T any] struct {
 	buf   []T
-	start int // índice del elemento más antiguo
-	n     int // elementos almacenados
+	start int // index of the oldest element
+	n     int // stored elements
 }
 
-// NewRing crea un búfer con la capacidad indicada (mínimo 1).
+// NewRing creates a buffer with the given capacity (at least 1).
 func NewRing[T any](capacity int) *Ring[T] {
 	if capacity < 1 {
 		capacity = 1
@@ -16,7 +16,7 @@ func NewRing[T any](capacity int) *Ring[T] {
 	return &Ring[T]{buf: make([]T, capacity)}
 }
 
-// Push añade un elemento, descartando el más antiguo si está lleno.
+// Push adds an element, dropping the oldest one if the buffer is full.
 func (r *Ring[T]) Push(v T) {
 	if r.n < len(r.buf) {
 		r.buf[(r.start+r.n)%len(r.buf)] = v
@@ -27,11 +27,11 @@ func (r *Ring[T]) Push(v T) {
 	r.start = (r.start + 1) % len(r.buf)
 }
 
-// Len devuelve el número de elementos almacenados.
+// Len returns the number of stored elements.
 func (r *Ring[T]) Len() int { return r.n }
 
-// Last devuelve hasta n elementos, del más antiguo al más reciente.
-// Con n <= 0 o mayor que Len devuelve todos.
+// Last returns up to n elements, oldest first. With n <= 0 or n > Len it
+// returns all of them.
 func (r *Ring[T]) Last(n int) []T {
 	if n <= 0 || n > r.n {
 		n = r.n
@@ -44,8 +44,8 @@ func (r *Ring[T]) Last(n int) []T {
 	return out
 }
 
-// Resized devuelve un búfer de la capacidad indicada con los elementos más
-// recientes de r que quepan.
+// Resized returns a buffer of the given capacity holding the most recent
+// elements of r that fit.
 func (r *Ring[T]) Resized(capacity int) *Ring[T] {
 	n := NewRing[T](capacity)
 	for _, v := range r.Last(len(n.buf)) {

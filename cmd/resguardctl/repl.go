@@ -9,13 +9,30 @@ import (
 	"strings"
 
 	"golang.org/x/term"
+
+	"github.com/LucasCis92/resguard/internal/i18n"
 )
 
 const prompt = "resguard> "
 
-// repl abre la sesión interactiva. En una terminal ofrece historial con las
-// flechas y autocompletado con Tab; si la entrada viene de un pipe o fichero,
-// lee línea a línea sin edición.
+// completionArgs returns the values offered by Tab for each command's first
+// argument, in the user's language. The daemon accepts both languages.
+func completionArgs(lang i18n.Lang) map[string][]string {
+	if lang == i18n.Spanish {
+		return map[string][]string{
+			"services": {"cpu", "mem", "apps", "servicios", "contenedores", "sesiones"},
+			"logs":     {"avisos", "seguir"},
+		}
+	}
+	return map[string][]string{
+		"services": {"cpu", "mem", "apps", "services", "containers", "sessions"},
+		"logs":     {"warnings", "follow"},
+	}
+}
+
+// repl opens the interactive session. In a terminal it offers history with
+// the arrow keys and Tab completion; when input comes from a pipe or a file,
+// it reads line by line without editing.
 func repl(s *session) {
 	s.interactive = true
 	s.loadCommands()
@@ -39,13 +56,7 @@ func repl(s *session) {
 	}{os.Stdin, os.Stdout}, prompt)
 	t.History = loadHistory(historyPath(), 500)
 
-	comp := &completer{
-		commands: s.commandNames,
-		args: map[string][]string{
-			"services": {"cpu", "mem", "apps", "servicios", "contenedores", "sesiones"},
-			"logs":     {"avisos", "seguir"},
-		},
-	}
+	comp := &completer{commands: s.commandNames, args: completionArgs(s.p.Lang())}
 	t.AutoCompleteCallback = func(line string, pos int, key rune) (string, int, bool) {
 		if key != '\t' {
 			return "", 0, false
@@ -57,14 +68,14 @@ func repl(s *session) {
 		return newLine, newPos, true
 	}
 
-	fmt.Fprintln(t, `resguardctl: escribe "help" para ver las órdenes y "exit" para salir. Tab autocompleta.`)
+	fmt.Fprintln(t, s.p.T(`resguardctl: type "help" for the commands and "exit" to quit. Tab completes.`))
 	for {
 		if w, h, err := term.GetSize(out); err == nil {
 			t.SetSize(w, h)
 		}
 		line, err := t.ReadLine()
 		if err != nil && !errors.Is(err, term.ErrPasteIndicator) {
-			return // Ctrl+D, Ctrl+C o fin de la entrada
+			return // Ctrl+D, Ctrl+C or end of input
 		}
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
@@ -77,13 +88,13 @@ func repl(s *session) {
 			fmt.Fprint(os.Stdout, "\x1b[H\x1b[2J")
 		case "watch":
 			if err := watch(s, fields[1:], true); err != nil {
-				fmt.Fprintln(t, "error:", err)
+				fmt.Fprintln(t, s.p.T("error:"), err)
 			}
 		case "logs":
-			// journalctl necesita la terminal en modo normal, no en modo raw.
+			// journalctl needs the terminal in normal mode, not raw mode.
 			term.Restore(in, oldState)
 			if err := logs(s, fields[1:]); err != nil {
-				fmt.Fprintln(os.Stderr, "error:", err)
+				fmt.Fprintln(os.Stderr, s.p.T("error:"), err)
 			}
 			if _, err := term.MakeRaw(in); err != nil {
 				return
@@ -110,10 +121,10 @@ func plainREPL(s *session) {
 		case "exit", "quit":
 			return
 		case "watch":
-			fmt.Println("error: watch necesita una terminal interactiva")
+			fmt.Println(s.p.T("error:"), s.p.T("watch needs an interactive terminal"))
 		case "logs":
 			if err := logs(s, fields[1:]); err != nil {
-				fmt.Println("error:", err)
+				fmt.Println(s.p.T("error:"), err)
 			}
 		default:
 			s.run(fields, os.Stdout)

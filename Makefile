@@ -1,15 +1,15 @@
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/LucasCis92/resguard/internal/version.Version=$(VERSION)
-# -trimpath evita que los binarios contengan rutas de la máquina donde se compilan;
-# CGO_ENABLED=0 genera binarios estáticos que funcionan en cualquier distribución.
+# -trimpath keeps paths of the build machine out of the binaries;
+# CGO_ENABLED=0 builds static binaries that run on any distribution.
 GOBUILD := CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)"
 
 PREFIX  ?= /usr/local
 DESTDIR ?=
 
-# Desarrollo local: sin root, vigilando los servicios del usuario. Se usa el
-# directorio privado del usuario (/run/user/UID, permisos 0700) y no /tmp, que
-# es compartido y permitiría a otro usuario adelantarse a crear la ruta.
+# Local development: no root, watching the user's own services. It uses the
+# user's private directory (/run/user/UID, mode 0700) rather than /tmp, which is
+# shared and would let another user create the path first.
 DEV_DIR    ?= $(XDG_RUNTIME_DIR)/resguard-dev
 DEV_SOCKET := $(DEV_DIR)/resguard.sock
 UID        := $(shell id -u)
@@ -20,10 +20,10 @@ DEV_SLICE  := user.slice/user-$(UID).slice/user@$(UID).service
 all: build
 
 check-go:
-	@command -v go >/dev/null || { echo "No se encuentra 'go'. Instálalo (https://go.dev/dl) o, si ya está, añádelo al PATH: export PATH=\$$PATH:/usr/local/go/bin"; exit 1; }
+	@command -v go >/dev/null || { echo "'go' not found. Install it (https://go.dev/dl) or, if it is installed, add it to PATH: export PATH=\$$PATH:/usr/local/go/bin"; exit 1; }
 
 check-devdir:
-	@[ -n "$(XDG_RUNTIME_DIR)" ] || { echo "XDG_RUNTIME_DIR no está definido; indica otro directorio privado con DEV_DIR=..."; exit 1; }
+	@[ -n "$(XDG_RUNTIME_DIR)" ] || { echo "XDG_RUNTIME_DIR is not set; give another private directory with DEV_DIR=..."; exit 1; }
 
 build: check-go
 	$(GOBUILD) -o bin/resguardd ./cmd/resguardd
@@ -41,32 +41,34 @@ fmt:
 clean:
 	rm -rf bin/ build/ dist/
 
-# Lanza el demonio en primer plano contra el systemd del usuario.
+# Runs the daemon in the foreground against the user's systemd.
 dev: check-devdir build
 	mkdir -m 0700 -p $(DEV_DIR)
 	./bin/resguardd -socket $(DEV_SOCKET) -interval 1s -systemd user \
 		-slices $(DEV_SLICE) -events-file $(DEV_DIR)/events.jsonl $(ARGS)
 
-# Abre la CLI contra el demonio de "make dev" (en otra terminal).
+# Opens the CLI against the "make dev" daemon (in another terminal).
 ctl: check-devdir
-	@[ -S $(DEV_SOCKET) ] || { echo "El demonio de desarrollo no está corriendo: lánzalo antes con 'make dev' en otra terminal."; exit 1; }
+	@[ -S $(DEV_SOCKET) ] || { echo "The development daemon is not running: start it first with 'make dev' in another terminal."; exit 1; }
 	./bin/resguardctl -socket $(DEV_SOCKET) $(ARGS)
 
-# No compila: "sudo make install" correría go como root, que normalmente no lo
-# tiene en el PATH. Primero "make build" como usuario normal.
+# It does not build: "sudo make install" would run go as root, which usually
+# lacks it in PATH. Run "make build" as a normal user first.
 install:
-	@[ -x bin/resguardd ] && [ -x bin/resguardctl ] || { echo "Faltan los binarios: ejecuta 'make build' (sin sudo) antes de 'sudo make install'."; exit 1; }
+	@[ -x bin/resguardd ] && [ -x bin/resguardctl ] || { echo "Binaries missing: run 'make build' (without sudo) before 'sudo make install'."; exit 1; }
 	install -Dm0755 bin/resguardd   $(DESTDIR)$(PREFIX)/bin/resguardd
 	install -Dm0755 bin/resguardctl $(DESTDIR)$(PREFIX)/bin/resguardctl
-	@# La unidad del repo apunta a /usr/bin (la ruta de los paquetes); aquí se ajusta a PREFIX.
+	@# The repository's unit points at /usr/bin (the package path); adjust it to PREFIX.
 	sed 's#^ExecStart=/usr/bin/#ExecStart=$(PREFIX)/bin/#' deploy/systemd/resguard.service > bin/resguard.service
 	install -Dm0644 bin/resguard.service $(DESTDIR)/etc/systemd/system/resguard.service
 	install -Dm0644 deploy/sysusers.d/resguard.conf $(DESTDIR)/usr/lib/sysusers.d/resguard.conf
 	install -Dm0644 deploy/man/resguardctl.1 $(DESTDIR)$(PREFIX)/share/man/man1/resguardctl.1
 	install -Dm0644 deploy/man/resguardd.8 $(DESTDIR)$(PREFIX)/share/man/man8/resguardd.8
-	@# La configuración solo se instala si no existe, para no pisar la del usuario.
+	install -Dm0644 deploy/man/es/resguardctl.1 $(DESTDIR)$(PREFIX)/share/man/es/man1/resguardctl.1
+	install -Dm0644 deploy/man/es/resguardd.8 $(DESTDIR)$(PREFIX)/share/man/es/man8/resguardd.8
+	@# The configuration is only installed if missing, so the user's is never overwritten.
 	@if [ -e $(DESTDIR)/etc/resguard/config.yaml ]; then \
-		echo "Se conserva la configuración existente en /etc/resguard/config.yaml"; \
+		echo "Keeping the existing configuration in /etc/resguard/config.yaml"; \
 	else \
 		install -Dm0644 deploy/config.yaml $(DESTDIR)/etc/resguard/config.yaml; \
 	fi
@@ -76,12 +78,14 @@ uninstall:
 	-systemctl disable --now resguard
 	rm -f $(DESTDIR)$(PREFIX)/bin/resguardd $(DESTDIR)$(PREFIX)/bin/resguardctl
 	rm -f $(DESTDIR)$(PREFIX)/share/man/man1/resguardctl.1 $(DESTDIR)$(PREFIX)/share/man/man8/resguardd.8
+	rm -f $(DESTDIR)$(PREFIX)/share/man/es/man1/resguardctl.1 $(DESTDIR)$(PREFIX)/share/man/es/man8/resguardd.8
 	rm -f $(DESTDIR)/etc/systemd/system/resguard.service $(DESTDIR)/usr/lib/sysusers.d/resguard.conf
-	@echo "Se conservan /etc/resguard (configuración) y /var/lib/resguard (incidencias); bórralos a mano si ya no los quieres."
+	@echo "Kept /etc/resguard (configuration) and /var/lib/resguard (incidents); delete them by hand if you no longer want them."
 	-systemctl daemon-reload
 
-# Genera los paquetes .deb y .rpm y los archivos .tar.gz en dist/, sin publicar
-# nada (requiere goreleaser). Las versiones publicadas las genera GitHub Actions.
+# Builds the .deb and .rpm packages and the .tar.gz archives into dist/
+# without publishing anything (needs goreleaser). Published releases are built
+# by GitHub Actions.
 package: check-go
-	@command -v goreleaser >/dev/null || { echo "Falta goreleaser: go install github.com/goreleaser/goreleaser/v2@v2.20.0"; exit 1; }
+	@command -v goreleaser >/dev/null || { echo "goreleaser is missing: go install github.com/goreleaser/goreleaser/v2@v2.20.0"; exit 1; }
 	goreleaser release --snapshot --clean
